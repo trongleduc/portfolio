@@ -3,12 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 1616",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "start": "next start -p 1616",
+    "lint": "eslint",
+    "db:reset": "tsx --env-file=.env.local scripts/seed.ts --yes",
+    "db:sql": "tsx scripts/seed.ts --sql"
   },
   "dependencies": {
+    "@hugeicons/core-free-icons": "^4.4.0",
+    "@hugeicons/react": "^1.1.10",
     "@supabase/supabase-js": "^2.99.2",
     "@tiptap/pm": "^3.29.2",
     "@tiptap/react": "^3.29.2",
@@ -26,11 +30,14 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.0",
+    "pg": "^8.23.1",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }

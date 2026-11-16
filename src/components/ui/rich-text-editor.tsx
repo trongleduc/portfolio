@@ -32,12 +32,12 @@ export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
   }
 
   return (
-    <div className="border border-input rounded-md overflow-hidden bg-background focus-within:ring-1 focus-within:ring-foreground transition-all">
-      <div className="flex flex-wrap items-center gap-1 p-1.5 bg-muted/40 border-b border-border text-muted-foreground text-xs">
+    <div className="field-shell">
+      <div className="flex flex-wrap items-center gap-1 border-b border-border/60 bg-muted/40 p-1.5 text-xs text-muted-foreground">
         <button
           type="button"
           onClick={() => editor.chain().focus().toggleBold().run()}
-          className={`p-1.5 rounded hover:bg-muted hover:text-foreground transition-colors ${editor.isActive('bold') ? 'bg-muted text-foreground font-bold' : ''}`}
+          className={`p-1.5 rounded-md hover:bg-muted hover:text-foreground transition-colors ${editor.isActive('bold') ? 'bg-muted text-foreground font-bold' : ''}`}
           title="In đậm (Bold)"
         >
           <Bold className="w-4 h-4" />
@@ -45,7 +45,7 @@ export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
         <button
           type="button"
           onClick={() => editor.chain().focus().toggleItalic().run()}
-          className={`p-1.5 rounded hover:bg-muted hover:text-foreground transition-colors ${editor.isActive('italic') ? 'bg-muted text-foreground italic' : ''}`}
+          className={`p-1.5 rounded-md hover:bg-muted hover:text-foreground transition-colors ${editor.isActive('italic') ? 'bg-muted text-foreground italic' : ''}`}
           title="In nghiêng (Italic)"
         >
           <Italic className="w-4 h-4" />
@@ -54,7 +54,7 @@ export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
         <button
           type="button"
           onClick={() => editor.chain().focus().toggleBulletList().run()}
-          className={`p-1.5 rounded hover:bg-muted hover:text-foreground transition-colors ${editor.isActive('bulletList') ? 'bg-muted text-foreground' : ''}`}
+          className={`p-1.5 rounded-md hover:bg-muted hover:text-foreground transition-colors ${editor.isActive('bulletList') ? 'bg-muted text-foreground' : ''}`}
           title="Danh sách gạch đầu dòng (Bullet List)"
         >
           <List className="w-4 h-4" />
@@ -62,7 +62,7 @@ export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
         <button
           type="button"
           onClick={() => editor.chain().focus().toggleOrderedList().run()}
-          className={`p-1.5 rounded hover:bg-muted hover:text-foreground transition-colors ${editor.isActive('orderedList') ? 'bg-muted text-foreground' : ''}`}
+          className={`p-1.5 rounded-md hover:bg-muted hover:text-foreground transition-colors ${editor.isActive('orderedList') ? 'bg-muted text-foreground' : ''}`}
           title="Danh sách số (Numbered List)"
         >
           <ListOrdered className="w-4 h-4" />
@@ -71,7 +71,7 @@ export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
         <button
           type="button"
           onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
-          className={`p-1.5 rounded hover:bg-muted hover:text-foreground transition-colors ${editor.isActive('heading', { level: 3 }) ? 'bg-muted text-foreground font-bold' : ''}`}
+          className={`p-1.5 rounded-md hover:bg-muted hover:text-foreground transition-colors ${editor.isActive('heading', { level: 3 }) ? 'bg-muted text-foreground font-bold' : ''}`}
           title="Tiêu đề (Heading)"
         >
           <Heading3 className="w-4 h-4" />

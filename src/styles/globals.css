@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
@@ -27,38 +29,736 @@
   --font-mono: var(--font-jetbrains), monospace;
 }
 
+/* Inlined so these read the next/font variables where they are set (on <body>), not on :root. */
+@theme inline {
+  --font-display: var(--font-display-face), var(--font-inter), sans-serif;
+}
+
+/*
+ * Palette. Every neutral is tinted with --tint-h, the hue of the active colour theme
+ * (data-color-theme on <html>), so "green" reads as the dark teal of the design and
+ * "blue" as its navy twin. --brand-accent is the accent fill; --brand-ink is the accent
+ * used for text, darkened in light mode so it keeps its contrast on pale surfaces.
+ */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 0 0% 10%;
+    /* Spring curve of the animated list; browsers without linear() fall back below */
+    --reveal-spring: linear(0, 0.0603, 0.2033, 0.3821, 0.5633, 0.7258, 0.8584, 0.9574, 1.0242, 1.0634, 1.0809, 1.0828, 1.0747, 1.0613, 1.046, 1.0313, 1.0186, 1.0085, 1.0012, 0.9965, 0.994, 0.9931, 0.9933, 0.9941, 0.9953, 0.9966, 0.9978, 0.9988, 1);
+    --tint-h: 205;
+    --brand-accent: 199 89% 60%;
+    --brand-ink: 201 80% 36%;
+    --on-accent: 200 40% 8%;
+
+    --background: var(--tint-h) 24% 95%;
+    --foreground: var(--tint-h) 30% 10%;
     --card: 0 0% 100%;
-    --card-foreground: 0 0% 10%;
+    --card-foreground: var(--tint-h) 30% 10%;
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 10%;
-    --muted: 0 0% 96%;
-    --muted-foreground: 0 0% 45%;
-    --border: 0 0% 90%;
-    --input: 0 0% 90%;
-    --ring: 0 0% 10%;
-    --primary: 0 0% 10%;
+    --popover-foreground: var(--tint-h) 30% 10%;
+    --muted: var(--tint-h) 20% 92%;
+    --muted-foreground: var(--tint-h) 10% 40%;
+    --border: var(--tint-h) 16% 86%;
+    --input: var(--tint-h) 16% 86%;
+    --ring: var(--tint-h) 30% 10%;
+    --primary: var(--tint-h) 30% 10%;
     --primary-foreground: 0 0% 98%;
-    --radius: 0.5rem;
+    --radius: 0.75rem;
+
+    /* Raised surfaces (light): white face, cool tinted slab */
+    --raised-from: 0 0% 100%;
+    --raised-to: var(--tint-h) 22% 97%;
+    --raised-edge: var(--tint-h) 20% 20% / 0.1;
+    --raised-edge-strong: var(--tint-h) 20% 20% / 0.22;
+    --raised-highlight: 0 0% 100% / 0.95;
+    --raised-shadow-near: var(--tint-h) 25% 20% / 0.08;
+    --raised-shadow-far: var(--tint-h) 25% 20% / 0.14;
+    --raised-press: var(--tint-h) 25% 20% / 0.16;
+
+    /* Block slab: the visible "side" stacked under every raised element */
+    --raised-slab-rim: var(--tint-h) 20% 99%;
+    --raised-slab: var(--tint-h) 16% 84%;
+    --raised-slab-deep: var(--tint-h) 14% 75%;
+    --raised-glow: var(--tint-h) 30% 20% / 0.16;
+  }
+
+  @supports not (transition-timing-function: linear(0, 1)) {
+    :root {
+      --reveal-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+    }
+  }
+
+  [data-color-theme="green"] {
+    --tint-h: 182;
+    --brand-accent: 166 46% 60%;
+    --brand-ink: 168 60% 28%;
+    --on-accent: 175 45% 8%;
+  }
+
+  [data-color-theme="blue"] {
+    --tint-h: 210;
+    --brand-accent: 199 89% 62%;
+    --brand-ink: 201 80% 36%;
+    --on-accent: 205 50% 8%;
   }
 
   .dark {
-    --background: 0 0% 3%; /* Very dark #080808 */
-    --foreground: 0 0% 98%;
-    --card: 0 0% 5%; /* #0c0c0c */
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 5%;
-    --popover-foreground: 0 0% 98%;
-    --muted: 0 0% 12%; /* #1f1f1f */
-    --muted-foreground: 0 0% 60%; /* #999 */
-    --border: 0 0% 15%; /* #262626 */
-    --input: 0 0% 15%;
-    --ring: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 9%;
+    --background: var(--tint-h) 30% 5%;
+    --foreground: var(--tint-h) 10% 96%;
+    --card: var(--tint-h) 24% 12%;
+    --card-foreground: var(--tint-h) 10% 96%;
+    --popover: var(--tint-h) 24% 12%;
+    --popover-foreground: var(--tint-h) 10% 96%;
+    --muted: var(--tint-h) 20% 16%;
+    --muted-foreground: var(--tint-h) 10% 64%;
+    --border: var(--tint-h) 18% 21%;
+    --input: var(--tint-h) 18% 21%;
+    --ring: var(--tint-h) 10% 96%;
+    --primary: var(--tint-h) 10% 96%;
+    --primary-foreground: var(--tint-h) 30% 8%;
+    --brand-ink: var(--brand-accent);
+
+    /* Raised surfaces (dark): tinted face that lightens toward the top edge */
+    --raised-from: var(--tint-h) 22% 19%;
+    --raised-to: var(--tint-h) 24% 14%;
+    --raised-edge: var(--tint-h) 30% 80% / 0.1;
+    --raised-edge-strong: var(--tint-h) 30% 80% / 0.2;
+    --raised-highlight: var(--tint-h) 40% 90% / 0.08;
+    --raised-shadow-near: 0 0% 0% / 0.45;
+    --raised-shadow-far: 0 0% 0% / 0.6;
+    --raised-press: 0 0% 0% / 0.55;
+
+    /* Block slab (dark): a lit rim, then a darker side falling into the page */
+    --raised-slab-rim: var(--tint-h) 20% 24%;
+    --raised-slab: var(--tint-h) 26% 10%;
+    --raised-slab-deep: var(--tint-h) 30% 6%;
+    --raised-glow: 0 0% 0% / 0.65;
+  }
+}
+
+/*
+ * Raised "block" design system: every block floats on a slab, a stack of hard,
+ * zero-blur shadows (rim -> slab -> deep) plus one soft drop shadow.
+ * - .panel-raised   : the floating content block (cards, section blocks)
+ * - .panel-accent   : modifier, accent-coloured block (the highlighted card)
+ * - .surface-raised : translucent large frame
+ * - .tile-raised    : static icon tiles
+ * - .btn-raised     : interactive buttons/links; lifts on hover, presses flat on click
+ * - .sheet-panel    : opaque floating panel for dialogs and admin sheets (no slab)
+ * Variants re-colour the slab through the local --slab-* custom properties.
+ */
+@layer components {
+  .surface-raised,
+  .panel-raised,
+  .tile-raised,
+  .btn-raised {
+    --slab-rim: hsl(var(--raised-slab-rim));
+    --slab: hsl(var(--raised-slab));
+    --slab-deep: hsl(var(--raised-slab-deep));
+    --slab-glow: hsl(var(--raised-glow));
+  }
+
+  .surface-raised {
+    background-image: linear-gradient(180deg, hsl(var(--raised-from) / 0.78), hsl(var(--raised-to) / 0.78));
+    border: 1px solid hsl(var(--raised-edge));
+    box-shadow:
+      inset 0 1px 0 hsl(var(--raised-highlight)),
+      0 1px 0 var(--slab-rim),
+      0 5px 0 var(--slab),
+      0 9px 0 var(--slab-deep),
+      0 30px 44px -18px var(--slab-glow);
+  }
+
+  .panel-raised {
+    position: relative;
+    isolation: isolate;
+    border-radius: 18px;
+    border: 1px solid hsl(var(--raised-edge));
+    background-image: linear-gradient(180deg, hsl(var(--raised-from)), hsl(var(--raised-to)));
+    box-shadow:
+      inset 0 1px 0 hsl(var(--raised-highlight)),
+      0 1px 0 var(--slab-rim),
+      0 4px 0 var(--slab),
+      0 7px 0 var(--slab-deep),
+      0 22px 32px -16px var(--slab-glow);
+    transition:
+      transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+      border-color 0.2s ease;
+  }
+
+  .panel-raised.panel-accent {
+    --slab-rim: color-mix(in oklab, hsl(var(--brand-accent)) 80%, white);
+    --slab: color-mix(in oklab, hsl(var(--brand-accent)) 55%, black);
+    --slab-deep: color-mix(in oklab, hsl(var(--brand-accent)) 32%, black);
+    --slab-glow: hsl(var(--brand-accent) / 0.4);
+    color: hsl(var(--on-accent));
+    border-color: color-mix(in oklab, hsl(var(--brand-accent)) 80%, white);
+    background-image: linear-gradient(
+      180deg,
+      color-mix(in oklab, hsl(var(--brand-accent)) 82%, white),
+      hsl(var(--brand-accent))
+    );
+  }
+
+  .tile-raised,
+  .btn-raised {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 12px;
+    border: 1px solid hsl(var(--raised-edge));
+    background-image: linear-gradient(180deg, hsl(var(--raised-from)), hsl(var(--raised-to)));
+  }
+
+  .tile-raised {
+    box-shadow:
+      inset 0 1px 0 hsl(var(--raised-highlight)),
+      0 1px 0 var(--slab-rim),
+      0 3px 0 var(--slab),
+      0 5px 0 var(--slab-deep),
+      0 10px 14px -8px var(--slab-glow);
+  }
+
+  .btn-raised {
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+    box-shadow:
+      inset 0 1px 0 hsl(var(--raised-highlight)),
+      0 1px 0 var(--slab-rim),
+      0 3px 0 var(--slab),
+      0 5px 0 var(--slab-deep),
+      0 12px 18px -10px var(--slab-glow);
+    transition:
+      transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+      border-color 0.2s ease,
+      color 0.2s ease;
+  }
+
+  .btn-raised:hover {
+    color: hsl(var(--foreground));
+    border-color: hsl(var(--raised-edge-strong));
+    transform: translateY(-2px);
+    box-shadow:
+      inset 0 1px 0 hsl(var(--raised-highlight)),
+      0 1px 0 var(--slab-rim),
+      0 5px 0 var(--slab),
+      0 7px 0 var(--slab-deep),
+      0 18px 24px -10px var(--slab-glow),
+      0 0 0 1px hsl(var(--brand-accent) / 0.12);
+  }
+
+  .btn-raised:active {
+    transform: translateY(4px);
+    box-shadow:
+      inset 0 2px 4px hsl(var(--raised-press)),
+      0 1px 0 var(--slab-rim),
+      0 1px 0 var(--slab),
+      0 1px 0 var(--slab-deep);
+    transition-duration: 0.06s;
+  }
+
+  .btn-raised:focus-visible {
+    outline: 2px solid hsl(var(--brand-accent));
+    outline-offset: 3px;
+  }
+
+  .btn-raised:disabled,
+  .btn-raised:disabled:hover {
+    cursor: not-allowed;
+    opacity: 0.5;
+    transform: none;
+  }
+
+  /* Accent call-to-action: accent face, darker accent slab, soft accent glow */
+  .btn-raised.btn-accent {
+    --slab-rim: color-mix(in oklab, hsl(var(--brand-accent)) 85%, white);
+    --slab: color-mix(in oklab, hsl(var(--brand-accent)) 58%, black);
+    --slab-deep: color-mix(in oklab, hsl(var(--brand-accent)) 36%, black);
+    --slab-glow: hsl(var(--brand-accent) / 0.45);
+    color: hsl(var(--on-accent)) !important;
+    border-color: color-mix(in oklab, hsl(var(--brand-accent)) 80%, white);
+    background-image: linear-gradient(
+      180deg,
+      color-mix(in oklab, hsl(var(--brand-accent)) 78%, white),
+      hsl(var(--brand-accent))
+    );
+  }
+
+  .btn-raised.btn-accent:hover {
+    border-color: color-mix(in oklab, hsl(var(--brand-accent)) 70%, white);
+  }
+
+  /*
+   * Variants (admin UI): solid primary, red-on-hover delete, solid destructive.
+   * Variant text colours are !important: callers often add a text-* utility for the
+   * neutral state, and utilities would otherwise paint light text on the light face.
+   */
+  .btn-raised.btn-primary,
+  .btn-raised.btn-primary:hover {
+    --slab-rim: hsl(var(--foreground) / 0.7);
+    --slab: hsl(var(--foreground) / 0.55);
+    --slab-deep: hsl(var(--foreground) / 0.35);
+    color: hsl(var(--background)) !important;
+    border-color: hsl(var(--foreground));
+    background-image: linear-gradient(180deg, hsl(var(--foreground) / 0.88), hsl(var(--foreground)));
+  }
+
+  .btn-raised.btn-danger:hover {
+    color: rgb(239 68 68) !important;
+    border-color: rgb(239 68 68 / 0.45);
+  }
+
+  .btn-raised.btn-danger-solid,
+  .btn-raised.btn-danger-solid:hover {
+    --slab-rim: rgb(248 113 113);
+    --slab: rgb(153 27 27);
+    --slab-deep: rgb(110 20 20);
+    --slab-glow: rgb(220 38 38 / 0.4);
+    color: #fff !important;
+    border-color: rgb(185 28 28);
+    background-image: linear-gradient(180deg, rgb(239 68 68), rgb(220 38 38));
+  }
+
+  /* Selected state for toggle-style raised controls (radio pills, active nav items) */
+  .btn-raised[aria-pressed="true"],
+  .btn-raised[aria-current="page"],
+  .btn-raised.is-active {
+    color: hsl(var(--foreground));
+    border-color: hsl(var(--brand-accent) / 0.55);
+  }
+
+  /* Small static block: tags, badges, active nav item */
+  .chip-raised {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    border-radius: 8px;
+    border: 1px solid hsl(var(--raised-edge));
+    background-image: linear-gradient(180deg, hsl(var(--raised-from)), hsl(var(--raised-to)));
+    box-shadow:
+      inset 0 1px 0 hsl(var(--raised-highlight)),
+      0 1px 0 hsl(var(--raised-slab-rim)),
+      0 2px 0 hsl(var(--raised-slab)),
+      0 3px 0 hsl(var(--raised-slab-deep));
+  }
+
+  /* Floating app bar (navbar): a rounded block hovering over the page */
+  .bar-raised {
+    background-image: linear-gradient(180deg, hsl(var(--raised-from) / 0.86), hsl(var(--raised-to) / 0.86));
+    border: 1px solid hsl(var(--raised-edge));
+    box-shadow:
+      inset 0 1px 0 hsl(var(--raised-highlight)),
+      0 1px 0 hsl(var(--raised-slab-rim)),
+      0 3px 0 hsl(var(--raised-slab)),
+      0 5px 0 hsl(var(--raised-slab-deep)),
+      0 18px 30px -18px hsl(var(--raised-glow));
+  }
+
+  /* Opaque floating panel for dialogs and admin sheets */
+  .sheet-panel {
+    border: 1px solid hsl(var(--raised-edge));
+    background-image: linear-gradient(180deg, hsl(var(--raised-from)), hsl(var(--raised-to)));
+    background-color: hsl(var(--card));
+    box-shadow:
+      inset 0 1px 0 hsl(var(--raised-highlight)),
+      0 40px 80px -24px hsl(0 0% 0% / 0.55);
+  }
+
+  /* Small uppercase mono label above a value or heading ("ĐANG HỌC", "02 — KINH NGHIỆM") */
+  .kicker {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    line-height: 1rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: hsl(var(--brand-ink));
+  }
+
+  .panel-accent .kicker {
+    color: hsl(var(--on-accent) / 0.7);
+  }
+
+  /*
+   * Magic-bento hover for every floating block: lifts, tints its edge, and carries a
+   * cursor-following spotlight. --mx / --my are written by <PageEffects /> from the
+   * pointer position. Opt out with .no-hover.
+   */
+  .panel-raised::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    background: radial-gradient(
+      420px circle at var(--mx, 50%) var(--my, 0%),
+      hsl(var(--brand-accent) / 0.14),
+      transparent 60%
+    );
+    transition: opacity 0.3s ease;
+  }
+
+  .panel-raised.panel-accent::before {
+    background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 0%), rgb(255 255 255 / 0.32), transparent 60%);
+  }
+
+  .panel-raised:not(.no-hover):hover,
+  .panel-raised:not(.no-hover):has(:focus-visible) {
+    transform: translateY(-3px);
+    border-color: hsl(var(--brand-accent) / 0.35);
+    box-shadow:
+      inset 0 1px 0 hsl(var(--raised-highlight)),
+      0 1px 0 var(--slab-rim),
+      0 6px 0 var(--slab),
+      0 10px 0 var(--slab-deep),
+      0 28px 40px -16px var(--slab-glow),
+      0 0 0 1px hsl(var(--brand-accent) / 0.1);
+  }
+
+  .panel-raised:not(.no-hover):hover::before,
+  .panel-raised:not(.no-hover):has(:focus-visible)::before {
+    opacity: 1;
+  }
+
+  /*
+   * Scroll reveal (the "pop" of the animated list): <PageEffects /> sets
+   * data-reveal-state to in / above / below. It animates the individual `translate`
+   * and `scale` properties so it composes with the hover `transform` above.
+   */
+  [data-reveal-state] {
+    transition:
+      translate 620ms var(--reveal-spring) var(--reveal-delay, 0s),
+      scale 620ms var(--reveal-spring) var(--reveal-delay, 0s),
+      opacity 300ms cubic-bezier(0.22, 1, 0.36, 1) var(--reveal-delay, 0s);
+  }
+
+  .panel-raised[data-reveal-state] {
+    transition:
+      translate 620ms var(--reveal-spring) var(--reveal-delay, 0s),
+      scale 620ms var(--reveal-spring) var(--reveal-delay, 0s),
+      opacity 300ms cubic-bezier(0.22, 1, 0.36, 1) var(--reveal-delay, 0s),
+      transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+      border-color 0.2s ease;
+  }
+
+  [data-reveal-state="above"] {
+    translate: 0 -12px;
+    scale: var(--reveal-scale, 0.8);
+    opacity: 0;
+  }
+
+  [data-reveal-state="below"] {
+    translate: 0 12px;
+    scale: var(--reveal-scale, 0.8);
+    opacity: 0;
+  }
+
+  /*
+   * Interactive desk (Stack section). Every length is a multiple of --du: one design
+   * pixel of the 860-wide scene, scaled to its @container and capped at 1px, so the
+   * desk always fits its column. Blocks are extruded with stacked hard shadows whose
+   * depth is --d and corner radius --r (both in design px, set inline).
+   * - .desk-b    : extruded block (theme surface)
+   * - .desk-key  : modifier, slightly darker face (keys, books, drive bays)
+   * - .desk-lit  : modifier, the selected object in the accent colour
+   * - .desk-hit  : lifts on hover, presses down on click
+   * - .desk-well : recessed screen inside the monitor
+   * - .desk-logo : monochrome logo that follows the surface it sits on
+   */
+  .desk-scene {
+    --du: min(1px, calc(100cqw / 860));
+    --logo-ink: brightness(0) opacity(0.78);
+    --logo-on-accent: brightness(0) opacity(0.72);
+  }
+
+  .dark .desk-scene {
+    --logo-ink: brightness(0) invert(1) opacity(0.85);
+  }
+
+  .desk-b,
+  .desk-pick {
+    color: hsl(var(--foreground));
+  }
+
+  .desk-b {
+    position: relative;
+    box-sizing: border-box;
+    --e: calc(var(--du) * var(--d, 10));
+    --s-hi: hsl(var(--raised-highlight));
+    --s1: hsl(var(--raised-slab-rim));
+    --s2: hsl(var(--raised-slab));
+    --s3: hsl(var(--raised-slab-deep));
+    --s-ground: 0 calc(var(--e) * 3) calc(var(--du) * 26) calc(var(--du) * -10) hsl(var(--raised-glow));
+    --logo-filter: var(--logo-ink);
+    border-radius: min(calc(var(--du) * var(--r, 20)), 28%);
+    border: 1px solid hsl(var(--raised-edge));
+    background-image: linear-gradient(180deg, hsl(var(--raised-from)), hsl(var(--raised-to)));
+    box-shadow:
+      inset 0 1px 0 var(--s-hi),
+      0 calc(var(--e) * 0.25) 0 calc(var(--e) * -0.0833) var(--s1),
+      0 calc(var(--e) * 0.5) 0 calc(var(--e) * -0.1667) var(--s1),
+      0 calc(var(--e) * 0.75) 0 calc(var(--e) * -0.25) var(--s2),
+      0 var(--e) 0 calc(var(--e) * -0.3333) var(--s2),
+      0 calc(var(--e) * 1.25) 0 calc(var(--e) * -0.4167) var(--s3),
+      0 calc(var(--e) * 1.5) 0 calc(var(--e) * -0.5) var(--s3),
+      var(--s-ground);
+    transition:
+      transform 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+
+  .desk-b.desk-key {
+    background-image: linear-gradient(
+      180deg,
+      color-mix(in oklab, hsl(var(--raised-from)) 90%, hsl(var(--foreground))),
+      color-mix(in oklab, hsl(var(--raised-to)) 94%, hsl(var(--foreground)))
+    );
+  }
+
+  .desk-b.desk-lit {
+    --s-hi: rgb(255 255 255 / 0.55);
+    --s1: color-mix(in oklab, hsl(var(--brand-accent)) 62%, black);
+    --s2: color-mix(in oklab, hsl(var(--brand-accent)) 46%, black);
+    --s3: color-mix(in oklab, hsl(var(--brand-accent)) 30%, black);
+    --s-ground: 0 calc(var(--e) * 3) calc(var(--du) * 28) calc(var(--du) * -10) hsl(var(--brand-accent) / 0.32);
+    --logo-filter: var(--logo-on-accent);
+    color: hsl(var(--on-accent));
+    border-color: color-mix(in oklab, hsl(var(--brand-accent)) 60%, white);
+    background-image: linear-gradient(180deg, color-mix(in oklab, hsl(var(--brand-accent)) 76%, white), hsl(var(--brand-accent)));
+  }
+
+  .desk-hit:hover {
+    --e: calc(var(--du) * var(--d, 10) * 1.45);
+    transform: translateY(calc(var(--du) * -4));
+  }
+
+  .desk-hit:active,
+  .desk-pick:active .desk-hit {
+    --e: calc(var(--du) * var(--d, 10) * 0.3);
+    transform: translateY(calc(var(--du) * var(--d, 10) * 0.6));
+    transition-duration: 0.06s;
+  }
+
+  .desk-pick:hover .desk-hit:not(:hover) {
+    transform: translateY(calc(var(--du) * -1.5));
+  }
+
+  .desk-well {
+    position: relative;
+    box-sizing: border-box;
+    --logo-filter: var(--logo-ink);
+    border-radius: calc(var(--du) * 12);
+    border: 1px solid hsl(var(--raised-edge));
+    background-color: hsl(var(--background) / 0.92);
+    color: hsl(var(--foreground));
+    box-shadow:
+      inset 0 calc(var(--du) * 3) calc(var(--du) * 8) hsl(var(--raised-press)),
+      inset 0 -1px 0 hsl(var(--raised-highlight));
+  }
+
+  .desk-logo {
+    object-fit: contain;
+    filter: var(--logo-filter);
+  }
+
+  .desk-scene button {
+    cursor: pointer;
+  }
+
+  .desk-scene button:focus-visible {
+    outline: 2px solid hsl(var(--brand-accent));
+    outline-offset: calc(var(--du) * 6);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .desk-b {
+      transition: none;
+    }
+    .desk-hit:hover,
+    .desk-hit:active,
+    .desk-pick:active .desk-hit,
+    .desk-pick:hover .desk-hit:not(:hover) {
+      transform: none;
+    }
+  }
+
+  /* Recessed well: the counterpart of a raised block (boards, media frames, empty states) */
+  .well-recessed {
+    border-radius: 14px;
+    border: 1px solid hsl(var(--raised-edge));
+    background-color: hsl(var(--background) / 0.65);
+    box-shadow:
+      inset 0 2px 6px hsl(var(--raised-press)),
+      inset 0 -1px 0 hsl(var(--raised-highlight));
+  }
+
+  /*
+   * Camera viewfinder (hero): recessed screen with corner brackets drawn by
+   * .vf-corner elements and a faint centre crosshair.
+   */
+  .viewfinder {
+    position: relative;
+    overflow: hidden;
+    border-radius: 14px;
+    border: 1px solid hsl(var(--raised-edge));
+    background:
+      radial-gradient(120% 80% at 50% 0%, hsl(var(--brand-accent) / 0.08), transparent 60%),
+      hsl(var(--background) / 0.7);
+    box-shadow:
+      inset 0 2px 10px hsl(var(--raised-press)),
+      inset 0 -1px 0 hsl(var(--raised-highlight));
+  }
+
+  .vf-corner {
+    position: absolute;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-color: hsl(var(--brand-accent) / 0.75);
+    pointer-events: none;
+  }
+
+  /*
+   * Recessed form controls, the counterpart of the raised surfaces.
+   * - .field-raised : <input>/<textarea>
+   * - .field-shell  : wrapper around a composite control (rich text editor)
+   */
+  .field-raised,
+  .field-shell {
+    width: 100%;
+    border-radius: 10px;
+    border: 1px solid hsl(var(--raised-edge-strong));
+    background-color: hsl(var(--background) / 0.7);
+    color: hsl(var(--foreground));
+    box-shadow: inset 0 1px 2px hsl(var(--raised-shadow-near));
+    transition:
+      border-color 0.2s ease,
+      background-color 0.2s ease,
+      box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .field-raised {
+    min-height: 2.75rem;
+    padding: 0.625rem 0.875rem;
+    /* 16px on phones stops iOS from zooming into focused fields */
+    font-size: 1rem;
+    line-height: 1.25rem;
+  }
+
+  @media (min-width: 640px) {
+    .field-raised {
+      font-size: 0.875rem;
+    }
+  }
+
+  .field-shell {
+    overflow: hidden;
+  }
+
+  .field-raised::placeholder {
+    color: hsl(var(--muted-foreground) / 0.7);
+  }
+
+  .field-raised:hover,
+  .field-shell:hover {
+    border-color: hsl(var(--brand-accent) / 0.35);
+  }
+
+  .field-raised:focus,
+  .field-shell:focus-within {
+    outline: none;
+    border-color: hsl(var(--brand-accent) / 0.6);
+    box-shadow:
+      inset 0 1px 2px hsl(var(--raised-shadow-near)),
+      0 0 0 3px hsl(var(--brand-accent) / 0.18);
+  }
+
+  /* Native date pickers / number spinners follow the theme */
+  .dark .field-raised {
+    color-scheme: dark;
+  }
+
+  /* Rich-text output (bios, descriptions) */
+  .rich-text {
+    line-height: 1.7;
+  }
+  .rich-text p + p {
+    margin-top: 0.75rem;
+  }
+  .rich-text ul {
+    list-style: disc;
+    padding-left: 1.25rem;
+  }
+  .rich-text ol {
+    list-style: decimal;
+    padding-left: 1.25rem;
+  }
+  .rich-text li {
+    margin: 0.375rem 0;
+  }
+  .rich-text li::marker {
+    color: hsl(var(--brand-accent));
+  }
+  .rich-text strong {
+    color: hsl(var(--foreground));
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .btn-raised,
+    .btn-raised:hover,
+    .btn-raised:active,
+    .panel-raised,
+    .panel-raised:hover,
+    .field-raised,
+    .field-shell {
+      transition: none;
+      transform: none;
+    }
+  }
+}
+
+/* Soft ambient glow behind the TL mark; replaces a 20 fps React interval */
+@keyframes tl-glow {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@utility animate-tl-glow {
+  animation: tl-glow 3.2s ease-in-out infinite;
+}
+
+@utility animate-sheet-in {
+  animation: sheet-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@utility animate-fade-in {
+  animation: fade-in 0.2s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal-state="above"],
+  [data-reveal-state="below"] {
+    translate: none;
+    scale: none;
+  }
+  .animate-tl-glow,
+  .animate-sheet-in,
+  .animate-fade-in {
+    animation: none;
   }
 }
 
@@ -66,21 +766,14 @@
   * {
     border-color: hsl(var(--border));
   }
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
-  }
-  
-  /* Diagonal stripes pattern for dark mode */
-  .dark body {
-    background-image: repeating-linear-gradient(
-      -45deg,
-      transparent,
-      transparent 10px,
-      hsl(var(--muted) / 0.4) 10px,
-      hsl(var(--muted) / 0.4) 11px
-    );
-    background-attachment: fixed;
+    -webkit-tap-highlight-color: transparent;
   }
 
   /* Thin Scrollbar */

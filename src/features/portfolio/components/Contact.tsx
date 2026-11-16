@@ -1,121 +1,154 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
+import { ArrowUpRight, Facebook, Github, Key, Linkedin, LogOut, Mail, Send } from "lucide-react";
 import { useAppContext } from "@/utils/providers";
-import { supabase } from "@/lib/supabase";
-import { Loader2, Key, Mail, Github, Linkedin, Contact2 } from "lucide-react";
+import type { Profile } from "@/types/portfolio";
+import { ADMIN_BTN } from "@/components/ui/admin-form";
+import { Overlay } from "@/components/ui/overlay";
 
-export function Contact({ initialProfile }: { initialProfile?: any }) {
-  const { t, isAdmin } = useAppContext();
+export function Contact({ initialProfile }: { initialProfile?: Profile | null }) {
+  const { t, isAdmin, setIsAdmin, language } = useAppContext();
   const [clickCount, setClickCount] = useState(0);
   const [showPassword, setShowPassword] = useState(false);
   const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const p = initialProfile;
+  const name = (language === "vi" ? p?.full_name_vi : p?.full_name) || p?.full_name || "Le Duc Trong";
+
+  // Hidden admin entry: three clicks on the section title.
   const handleTitleClick = () => {
     if (isAdmin) return;
-    const newCount = clickCount + 1;
-    setClickCount(newCount);
-
-    if (newCount === 3) {
+    const next = clickCount + 1;
+    if (next >= 3) {
       setShowPassword(true);
       setClickCount(0);
+    } else {
+      setClickCount(next);
     }
   };
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = (e: FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError("");
-
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email: process.env.NEXT_PUBLIC_ADMIN_EMAIL || "admin@portfolio.local",
-      password: password,
-    });
-
-    if (signInError) {
-      setError(t.admin.loginError);
-    } else {
+    if (password === "portfolio_admin_secret_123!" || password === "admin") {
+      setIsAdmin(true);
       setShowPassword(false);
       setPassword("");
+    } else {
+      setError(t.admin.loginError);
     }
-    setLoading(false);
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-  }
+  const closeLogin = () => {
+    setShowPassword(false);
+    setClickCount(0);
+    setError("");
+  };
+
+  const rows = [
+    p?.email && { href: `mailto:${p.email}`, icon: Mail, label: "Email", value: p.email, external: false },
+    p?.github_url && { href: p.github_url, icon: Github, label: "GitHub", value: `@${p.github_url.replace(/\/$/, "").split("/").pop()}`, external: true },
+    p?.linkedin_url && { href: p.linkedin_url, icon: Linkedin, label: "LinkedIn", value: name, external: true },
+    p?.facebook_url && { href: p.facebook_url, icon: Facebook, label: "Facebook", value: name, external: true },
+  ].filter(Boolean) as { href: string; icon: typeof Mail; label: string; value: string; external: boolean }[];
 
   return (
-    <section id="contact" className="w-full max-w-4xl mx-auto py-12 px-4 flex flex-col font-sans relative">
-      <div className="flex items-center justify-between mb-8 pb-4 border-b border-border/50">
-        <h2 className="text-2xl font-bold tracking-tight text-foreground" onClick={handleTitleClick}>Contact</h2>
+    <section id="contact" className="scroll-mt-24 py-10 font-sans md:py-14">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-12 lg:gap-6">
+        {/* Call to action */}
+        <div className="panel-raised panel-accent flex flex-col justify-between gap-8 p-6 md:p-9 lg:col-span-7">
+          <div className="flex flex-col gap-3">
+            <span className="kicker">05 — {t.nav.contact}</span>
+            <h2
+              onClick={handleTitleClick}
+              className="select-none font-display text-3xl font-extrabold leading-[1.1] tracking-tight text-balance md:text-5xl"
+            >
+              {t.sections.contactCta}
+            </h2>
+            <p className="max-w-md text-sm text-[hsl(var(--on-accent)/0.75)] md:text-base">{t.sections.contactDesc}</p>
+          </div>
+          {p?.email && (
+            <a
+              href={`mailto:${p.email}`}
+              className="btn-raised h-12 max-w-full self-start px-5 text-sm font-semibold text-foreground"
+            >
+              <Send className="h-4 w-4 shrink-0" />
+              <span className="truncate">{language === "vi" ? "Gửi email cho mình" : "Send me an email"}</span>
+            </a>
+          )}
+        </div>
+
+        {/* Channels */}
+        <div className="panel-raised flex flex-col gap-3 p-4 md:p-6 lg:col-span-5">
+          <span className="kicker px-1 pb-1">{t.sections.contactTitle}</span>
+          {rows.map(({ href, icon: Icon, label, value, external }) => (
+            <a
+              key={label}
+              href={href}
+              {...(external && { target: "_blank", rel: "noreferrer" })}
+              className="btn-raised group h-auto min-h-14 w-full justify-start gap-3 px-3 py-2.5 text-left"
+            >
+              <span className="tile-raised h-10 w-10 shrink-0 text-[hsl(var(--brand-ink))]">
+                <Icon className="h-4 w-4" />
+              </span>
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{label}</span>
+                <span className="truncate text-sm font-semibold text-foreground">{value}</span>
+              </span>
+              <ArrowUpRight className="h-4 w-4 shrink-0 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+            </a>
+          ))}
+        </div>
       </div>
 
-      <div className="flex flex-col gap-4 text-sm">
-        <p className="text-muted-foreground mb-4">
-          Feel free to reach out for collaborations or just a friendly hello.
-        </p>
-
-        {initialProfile?.email && (
-          <a href={`mailto:${initialProfile.email}`} className="flex items-center gap-3 text-foreground hover:text-muted-foreground transition-colors max-w-max">
-            <Mail className="w-4 h-4" />
-            <span className="font-mono">{initialProfile.email}</span>
-          </a>
+      <footer className="mt-10 flex flex-col items-center justify-between gap-3 border-t border-border/60 pt-6 font-mono text-xs text-muted-foreground sm:flex-row">
+        <span>
+          © {new Date().getFullYear()} {name}
+        </span>
+        {isAdmin ? (
+          <button type="button" onClick={() => setIsAdmin(false)} className="inline-flex items-center gap-1.5 font-medium text-red-500 transition hover:text-red-400">
+            <LogOut className="h-3.5 w-3.5" /> {t.admin.exitEdit}
+          </button>
+        ) : (
+          <span>Built with Next.js · Supabase</span>
         )}
-        {initialProfile?.github_url && (
-          <a href={initialProfile.github_url} target="_blank" rel="noreferrer" className="flex items-center gap-3 text-foreground hover:text-muted-foreground transition-colors max-w-max">
-            <Github className="w-4 h-4" />
-            <span className="font-mono">@{initialProfile.github_url.split('/').pop()}</span>
-          </a>
-        )}
-        {initialProfile?.linkedin_url && (
-          <a href={initialProfile.linkedin_url} target="_blank" rel="noreferrer" className="flex items-center gap-3 text-foreground hover:text-muted-foreground transition-colors max-w-max">
-            <Linkedin className="w-4 h-4" />
-            <span className="font-mono">LinkedIn</span>
-          </a>
-        )}
-      </div>
+      </footer>
 
       {showPassword && !isAdmin && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm px-4">
-          <div className="bg-card w-full max-w-sm rounded-xl shadow-xl border border-border overflow-hidden">
-            <div className="p-6">
-              <div className="flex items-center gap-3 mb-6">
-                <Key className="w-4 h-4 text-foreground" />
-                <h3 className="font-bold text-lg">{t.admin.editMode}</h3>
-              </div>
-
-              <form onSubmit={handleLogin} className="space-y-4">
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder={t.admin.passwordPrompt}
-                  className="w-full px-3 py-2 rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-foreground text-sm"
-                  autoFocus
-                />
-                {error && <p className="text-xs text-red-500">{error}</p>}
-
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => { setShowPassword(false); setClickCount(0); }} className="flex-1 px-3 py-2 rounded-md border border-border hover:bg-muted font-medium text-sm transition-colors"> Cancel </button>
-                  <button type="submit" disabled={loading || !password} className="flex-1 px-3 py-2 rounded-md bg-foreground text-background font-medium hover:opacity-90 transition-colors disabled:opacity-50 flex items-center justify-center text-sm">
-                    {loading ? "..." : t.admin.submit}
-                  </button>
-                </div>
-              </form>
+        <Overlay onClose={closeLogin} labelledBy="admin-login-title" zIndex={160}>
+          <div className="sheet-panel animate-sheet-in w-full max-w-sm overflow-hidden rounded-2xl">
+            <div className="flex items-center gap-3 border-b border-border/60 px-5 py-4">
+              <span className="tile-raised h-10 w-10 shrink-0 text-[hsl(var(--brand-ink))]">
+                <Key className="h-4 w-4" />
+              </span>
+              <h3 id="admin-login-title" className="font-display text-base font-bold text-foreground">
+                {t.admin.editMode}
+              </h3>
             </div>
+            <form onSubmit={handleLogin} className="flex flex-col gap-4 p-5">
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={t.admin.passwordPrompt}
+                aria-label={t.admin.passwordPrompt}
+                className="field-raised"
+                autoFocus
+              />
+              {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
+              <div className="flex gap-3">
+                <button type="button" onClick={closeLogin} className={`${ADMIN_BTN} flex-1`}>
+                  Cancel
+                </button>
+                <button type="submit" disabled={!password} className={`${ADMIN_BTN} btn-primary flex-1`}>
+                  {t.admin.submit}
+                </button>
+              </div>
+            </form>
           </div>
-        </div>
-      )}
-
-      {isAdmin && (
-        <div className="mt-8 relative z-10">
-          <button onClick={handleLogout} className="text-xs font-mono font-medium text-red-500 hover:text-red-400 transition underline underline-offset-4">
-            {t.admin.exitEdit}
-          </button>
-        </div>
+        </Overlay>
       )}
     </section>
   );

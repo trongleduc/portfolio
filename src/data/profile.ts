@@ -1,0 +1,28 @@
+import { Profile } from "@/types/portfolio";
+
+export const profileData: Profile = {
+  full_name: "Le Duc Trong",
+  full_name_vi: "Lê Đức Trọng",
+  title: "Software Engineering",
+  title_vi: "Kỹ thuật Phần mềm",
+  bio: "Driven by a long-standing interest in programming, I am a Full-stack Developer focusing on ASP.NET and Next.js. Having experienced roles as both a team contributor and leader, I value the importance of adaptability and constant self-improvement. I am eager to apply my current knowledge while learning from experienced mentors in a professional setting.",
+  bio_vi: "Xuất phát từ niềm đam mê lập trình lâu năm, tôi là một lập trình viên Full-stack chuyên về ASP.NET và Next.js. Từng đảm nhiệm cả vai trò thành viên nhóm và người lãnh đạo, tôi đánh giá cao tầm quan trọng của khả năng thích ứng và tự hoàn thiện bản thân không ngừng. Tôi mong muốn được áp dụng kiến thức hiện có đồng thời học hỏi từ những người hướng dẫn giàu kinh nghiệm trong môi trường chuyên nghiệp.",
+  avatar_url: "/portfolio-images/profile/avatar_0.7536902475208322.png",
+  avatar_x: 48,
+  avatar_y: 19,
+  avatar_scale: 1.9,
+  cv_url: "/portfolio-images/profile/cv_0.5386134662060291.pdf",
+  email: "trongle1161@gmail.com",
+  location: "Vietnam",
+  location_vi: "Việt Nam",
+  work_format: "Full-time / Freelancer, Full-time, Onsite",
+  work_format_vi: "Toàn thời gian / Freelancer, Onsite",
+  gender: "he/him",
+  github_url: "https://github.com/trongleduc",
+  linkedin_url: "https://www.linkedin.com/in/trong-le-duc/",
+  facebook_url: "https://www.facebook.com/trong.le.26298",
+  instagram_url: "https://www.instagram.com/accounts/edit/?hl=en",
+  stats_languages: 3,
+  stats_tools: 9,
+  stats_experience: 1,
+};

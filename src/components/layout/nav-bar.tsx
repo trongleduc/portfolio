@@ -1,240 +1,250 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useAppContext } from "@/utils/providers";
-import { supabase } from "@/lib/supabase";
-import { Search, Command, Github, Moon, Sun, Menu, X, Palette } from "lucide-react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { useTheme } from "next-themes";
+import { ArrowUp, Languages, Menu, Moon, Palette, Sun, X } from "lucide-react";
+import { useAppContext } from "@/utils/providers";
+import { cn } from "@/lib/utils";
+
+const SECTION_IDS = ["hero", "journey", "projects", "stack", "contact"] as const;
 
 export function Navbar() {
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
   const { language, setLanguage, t, colorTheme, setColorTheme } = useAppContext();
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  // Flat, full-width bar at the very top; it detaches into a rounded floating block on scroll.
+  const [isDocked, setIsDocked] = useState(true);
   const [activeSection, setActiveSection] = useState<string>("hero");
-  const [nameInfo, setNameInfo] = useState({ en: 'Le Duc Trong', vi: 'Lê Đức Trọng', avatar: '', x: 50, y: 50, scale: 1 });
+  const linksRef = useRef<HTMLDivElement>(null);
+  const indicatorRef = useRef<HTMLSpanElement>(null);
+  const placedRef = useRef(false);
 
   const navItems = [
-    { id: "hero", href: "#hero", label: t.nav.home },
-    { id: "work", href: "#work", label: t.nav.work },
-    { id: "education", href: "#education", label: t.nav.education },
-    { id: "projects", href: "#projects", label: t.nav.projects },
-    { id: "stack", href: "#stack", label: t.nav.stack },
-    { id: "contact", href: "#contact", label: t.nav.contact },
+    { id: "hero", label: t.nav.home },
+    { id: "journey", label: t.nav.journey },
+    { id: "projects", label: t.nav.projects },
+    { id: "stack", label: t.nav.stack },
+    { id: "contact", label: t.nav.contact },
   ];
 
   useEffect(() => {
-    supabase.from('profiles').select('full_name, full_name_vi, avatar_url, avatar_x, avatar_y, avatar_scale').limit(1).then(({ data }) => {
-      if (data && data[0]) {
-        setNameInfo({
-          en: data[0].full_name || 'Le Duc Trong',
-          vi: data[0].full_name_vi || 'Lê Đức Trọng',
-          avatar: data[0].avatar_url || '',
-          x: data[0].avatar_x || 50,
-          y: data[0].avatar_y || 50,
-          scale: data[0].avatar_scale || 1
-        });
-      }
-    });
-
-    const handleScroll = () => {
+    const onScroll = () => {
       setIsScrolled(window.scrollY > 400);
+      setIsDocked(window.scrollY < 12);
     };
-    window.addEventListener("scroll", handleScroll);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
 
-    // Active section detection via IntersectionObserver
-    const sectionIds = ["hero", "work", "education", "projects", "stack", "contact"];
-    const handleObserver = (entries: IntersectionObserverEntry[]) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          setActiveSection(entry.target.id);
-        }
-      });
-    };
-
-    const observer = new IntersectionObserver(handleObserver, {
-      rootMargin: "-20% 0px -55% 0px",
-      threshold: 0.1,
-    });
-
-    sectionIds.forEach((id) => {
+    const observer = new IntersectionObserver(
+      (entries) => entries.forEach((entry) => entry.isIntersecting && setActiveSection(entry.target.id)),
+      { rootMargin: "-20% 0px -55% 0px", threshold: 0.1 },
+    );
+    SECTION_IDS.forEach((id) => {
       const el = document.getElementById(id);
       if (el) observer.observe(el);
     });
 
     return () => {
-      window.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("scroll", onScroll);
       observer.disconnect();
     };
   }, []);
 
-  const scrollToSection = (e: React.MouseEvent<HTMLAnchorElement>, href: string) => {
-    e.preventDefault();
-    const targetId = href.replace("#", "");
-    const el = document.getElementById(targetId);
-    if (el) {
-      const navHeight = 56;
-      const elementPosition = el.getBoundingClientRect().top + window.scrollY;
-      const offsetPosition = elementPosition - navHeight;
+  // Slide the pill under the active link. The first placement snaps; later ones animate,
+  // so scrolling past several sections glides the pill across each tab in turn.
+  useEffect(() => {
+    const place = () => {
+      const wrap = linksRef.current;
+      const pill = indicatorRef.current;
+      const link = wrap?.querySelector<HTMLElement>(`[data-nav="${activeSection}"]`);
+      if (!wrap || !pill || !link || !link.offsetWidth) return;
+      const first = !placedRef.current;
+      if (first) pill.style.transition = "none";
+      pill.style.width = `${link.offsetWidth}px`;
+      pill.style.transform = `translateX(${link.offsetLeft}px)`;
+      pill.style.opacity = "1";
+      if (first) {
+        void pill.offsetWidth;
+        pill.style.transition = "";
+        placedRef.current = true;
+      }
+    };
+    place();
+    document.fonts?.ready.then(place);
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [activeSection, language]);
 
-      window.scrollTo({
-        top: offsetPosition,
-        behavior: "smooth"
-      });
-      setActiveSection(targetId);
-    } else if (href === "#hero" || href === "#") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-      setActiveSection("hero");
-    }
+  // Close the phone menu with Escape.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setIsOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen]);
+
+  const go = (e: MouseEvent<HTMLAnchorElement>, id: string) => {
+    e.preventDefault();
     setIsOpen(false);
+    // The active tab is not set here: the pill follows the scroll through each section.
+    if (id === "hero") return window.scrollTo({ top: 0, behavior: "smooth" });
+    const el = document.getElementById(id);
+    if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 80, behavior: "smooth" });
   };
+
+  const toggleColor = () => setColorTheme(colorTheme === "blue" ? "green" : "blue");
+  const toggleTheme = () => setTheme(resolvedTheme === "dark" ? "light" : "dark");
+  const toggleLang = () => setLanguage(language === "en" ? "vi" : "en");
+
+  const colorLabel = colorTheme === "blue" ? "Blue" : "Teal";
+  const swatch = colorTheme === "blue" ? "bg-sky-400" : "bg-teal-300";
 
   return (
     <>
-      <nav className="w-full fixed top-0 z-50 bg-background/80 backdrop-blur-md border-b border-border font-sans">
-        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
+      <nav
+        className={cn(
+          "fixed inset-x-0 top-0 z-50 font-sans transition-[padding] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+          isDocked && !isOpen ? "px-0 pt-0" : "px-3 pt-3 sm:px-4",
+        )}
+      >
+        <div
+          className={cn(
+            "relative isolate mx-auto flex h-14 items-center justify-between gap-3 transition-[max-width,border-radius,padding,background-color] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+            isDocked && !isOpen
+              ? "max-w-full rounded-none bg-background px-4 sm:px-6 lg:px-8"
+              : "max-w-7xl rounded-2xl bg-transparent px-2.5 sm:px-3",
+          )}
+        >
+          {/* Floating block surface: fades in once the bar leaves the top of the page */}
+          <span
+            aria-hidden
+            className={cn(
+              "bar-raised pointer-events-none absolute inset-0 -z-10 rounded-[inherit] backdrop-blur-md transition-opacity duration-500 motion-reduce:transition-none",
+              isDocked && !isOpen ? "opacity-0" : "opacity-100",
+            )}
+          />
 
           {/* Brand */}
-          <div className="flex items-center gap-2 font-bold text-xl min-w-[120px]">
-            <a
-              href="#hero"
-              onClick={(e) => scrollToSection(e, "#hero")}
-              className="tracking-tighter hover:opacity-80 transition-opacity"
-            >
-              TRONGLE
-            </a>
-          </div>
+          <a href="#hero" onClick={(e) => go(e, "hero")} className="group flex min-w-0 flex-col rounded-xl px-1.5 py-1 leading-none">
+            <span className="truncate font-display text-base font-extrabold tracking-wide text-foreground">
+              TRONG<span className="text-[hsl(var(--brand-ink))]">LE</span>
+            </span>
+            <span className="mt-1 truncate font-mono text-[9px] uppercase tracking-[0.2em] text-muted-foreground">Strive for the best</span>
+          </a>
 
-          {/* Desktop Menu */}
-          <div className="hidden md:flex items-center gap-1 text-xs font-medium text-muted-foreground">
+          {/* Laptop links */}
+          <div ref={linksRef} className="relative hidden items-center gap-1 text-xs font-medium text-muted-foreground lg:flex">
+            <span
+              ref={indicatorRef}
+              aria-hidden
+              className="chip-raised pointer-events-none absolute inset-y-0 left-0 rounded-lg opacity-0 transition-[transform,width,opacity] duration-500 ease-[cubic-bezier(0.34,1.25,0.64,1)] motion-reduce:transition-none"
+            />
             {navItems.map((item) => {
-              const isActive = activeSection === item.id;
+              const active = activeSection === item.id;
               return (
                 <a
                   key={item.id}
-                  href={item.href}
-                  onClick={(e) => scrollToSection(e, item.href)}
-                  aria-current={isActive ? "page" : undefined}
-                  className={`relative px-3 py-1.5 rounded-md transition-all duration-200 ${isActive
-                      ? "text-foreground font-semibold bg-muted/70"
-                      : "hover:text-foreground hover:bg-muted/30"
-                    }`}
+                  data-nav={item.id}
+                  href={`#${item.id}`}
+                  onClick={(e) => go(e, item.id)}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "relative z-10 rounded-lg px-3 py-2 transition-colors duration-300",
+                    active ? "font-semibold text-foreground" : "hover:text-foreground",
+                  )}
                 >
                   {item.label}
-                  {isActive && (
-                    <span className="absolute bottom-0 left-3 right-3 h-0.5 bg-foreground rounded-full transition-all" />
-                  )}
                 </a>
               );
             })}
           </div>
 
-          {/* Controls (Right) */}
-          <div className="hidden md:flex items-center gap-3">
-            <div className="flex items-center gap-2 text-muted-foreground border border-border rounded-md px-2 py-1 text-xs">
-              <Search className="w-3.5 h-3.5" />
+          {/* Controls */}
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="hidden items-center gap-2 sm:flex">
+              <button type="button" onClick={toggleColor} className="btn-raised h-9 gap-1.5 px-2.5" title={`Accent: ${colorLabel}`} aria-label={`Switch accent colour (now ${colorLabel})`}>
+                <Palette className="h-4 w-4" />
+                <span className={cn("h-2 w-2 rounded-full", swatch)} />
+              </button>
+              <button type="button" onClick={toggleTheme} className="btn-raised h-9 w-9" aria-label="Toggle light / dark mode">
+                <Moon className="hidden h-4 w-4 dark:block" />
+                <Sun className="h-4 w-4 dark:hidden" />
+              </button>
+              <button type="button" onClick={toggleLang} className="btn-raised h-9 px-2.5 font-mono text-xs font-semibold" aria-label="Switch language">
+                {language.toUpperCase()}
+              </button>
             </div>
-
-            <div className="h-4 w-px bg-border mx-1"></div>
-
-            {/* Background Color Switcher */}
             <button
-              onClick={() => setColorTheme(colorTheme === 'blue' ? 'green' : 'blue')}
-              className="group relative p-1.5 text-muted-foreground hover:text-foreground transition-colors border border-border rounded-md hover:bg-muted/50 flex items-center gap-1.5"
-              title={`Switch to ${colorTheme === 'blue' ? 'Dark Green' : 'Dark Blue'} theme`}
+              type="button"
+              className="btn-raised h-10 w-10 lg:hidden"
+              onClick={() => setIsOpen(!isOpen)}
+              aria-label={isOpen ? "Close menu" : "Open menu"}
+              aria-expanded={isOpen}
+              aria-controls="mobile-menu"
             >
-              <Palette className="w-4 h-4" />
-              <span className={`w-2 h-2 rounded-full ${colorTheme === 'blue' ? 'bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.8)]' : 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.8)]'}`} />
-              <span className="text-xs font-mono font-medium capitalize hidden lg:inline">{colorTheme === 'blue' ? 'Blue' : 'Green'}</span>
-              <span className="absolute -bottom-8 right-0 bg-popover text-popover-foreground text-xs px-2 py-1 border border-border rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                Bg Color: {colorTheme === 'blue' ? 'Dark Blue' : 'Dark Green'}
-              </span>
-            </button>
-
-            <button
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              className="group relative p-1.5 text-muted-foreground hover:text-foreground transition-colors border border-border rounded-md hover:bg-muted/50"
-            >
-              <Moon className="w-4 h-4 hidden dark:block" />
-              <Sun className="w-4 h-4 dark:hidden" />
-              <span className="absolute -bottom-8 right-0 bg-popover text-popover-foreground text-xs px-2 py-1 border border-border rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                Toggle mode D
-              </span>
-            </button>
-
-            <button onClick={() => setLanguage(language === 'en' ? 'vi' : 'en')} className="text-xs font-mono font-medium text-muted-foreground hover:text-foreground transition-colors border border-border rounded-md px-2 py-1">
-              {language.toUpperCase()}
+              {isOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
           </div>
-
-          {/* Mobile menu button */}
-          <button className="md:hidden p-2 text-muted-foreground hover:text-foreground" onClick={() => setIsOpen(!isOpen)}>
-            {isOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
         </div>
 
+        {/* Phone / tablet menu: a floating block under the bar */}
         {isOpen && (
-          <div className="md:hidden p-4 bg-background border-b border-border flex flex-col gap-2 text-sm">
-            {navItems.map((item) => {
-              const isActive = activeSection === item.id;
-              return (
-                <a
-                  key={item.id}
-                  href={item.href}
-                  onClick={(e) => scrollToSection(e, item.href)}
-                  aria-current={isActive ? "page" : undefined}
-                  className={`py-2 px-3 rounded-lg transition-colors flex items-center justify-between ${isActive
-                      ? "bg-muted/80 text-foreground font-semibold"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
-                    }`}
-                >
-                  <span>{item.label}</span>
-                  {isActive && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-foreground" />
-                  )}
-                </a>
-              );
-            })}
-            <div className="flex flex-col gap-3 pt-4 border-t border-border mt-2">
-              <button
-                onClick={() => setColorTheme(colorTheme === 'blue' ? 'green' : 'blue')}
-                className="text-left flex items-center justify-between"
-              >
-                <span className="flex items-center gap-2">
-                  <Palette className="w-4 h-4" />
-                  <span>Background Color</span>
+          <div id="mobile-menu" className="sheet-panel animate-sheet-in mx-auto mt-2 max-w-7xl rounded-2xl p-3 lg:hidden">
+            <div className="grid grid-cols-2 gap-2">
+              {navItems.map((item) => {
+                const active = activeSection === item.id;
+                return (
+                  <a
+                    key={item.id}
+                    href={`#${item.id}`}
+                    onClick={(e) => go(e, item.id)}
+                    aria-current={active ? "page" : undefined}
+                    className={cn("btn-raised h-12 justify-between px-4 text-sm font-medium", active && "text-foreground")}
+                  >
+                    <span>{item.label}</span>
+                    {active && <span className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--brand-accent))]" />}
+                  </a>
+                );
+              })}
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border/60 pt-3 sm:hidden">
+              <button type="button" onClick={toggleColor} className="btn-raised h-12 flex-col gap-1 text-[10px] font-semibold uppercase tracking-wider">
+                <span className="flex items-center gap-1.5">
+                  <Palette className="h-4 w-4" />
+                  <span className={cn("h-2 w-2 rounded-full", swatch)} />
                 </span>
-                <span className={`text-xs px-2 py-0.5 rounded font-mono font-bold capitalize ${colorTheme === 'blue' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'}`}>
-                  {colorTheme === 'blue' ? 'Dark Blue' : 'Dark Green'}
-                </span>
+                {colorLabel}
               </button>
-              <button onClick={() => setLanguage(language === 'en' ? 'vi' : 'en')} className="text-left">
-                Language: {language.toUpperCase()}
+              <button type="button" onClick={toggleTheme} className="btn-raised h-12 flex-col gap-1 text-[10px] font-semibold uppercase tracking-wider">
+                <Moon className="hidden h-4 w-4 dark:block" />
+                <Sun className="h-4 w-4 dark:hidden" />
+                <span className="hidden dark:inline">Dark</span>
+                <span className="dark:hidden">Light</span>
               </button>
-              <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className="text-left flex items-center gap-2">
-                Toggle Theme
+              <button type="button" onClick={toggleLang} className="btn-raised h-12 flex-col gap-1 text-[10px] font-semibold uppercase tracking-wider">
+                <Languages className="h-4 w-4" />
+                {language === "en" ? "English" : "Tiếng Việt"}
               </button>
             </div>
           </div>
         )}
       </nav>
 
-      {/* Floating Avatar when scrolled - Keeping it as requested for feature parity, adapted to new style */}
-      <div className={`fixed bottom-6 left-6 z-[100] transition-all duration-500 transform origin-bottom-left ${isScrolled ? 'translate-y-0 opacity-100 scale-100' : 'translate-y-12 opacity-0 scale-50 pointer-events-none'}`}>
-        <div className="flex items-center gap-3 bg-card border border-border p-2 pr-4 rounded-full shadow-lg cursor-pointer hover:border-muted-foreground/50 transition-colors" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-          <div className="w-10 h-10 rounded-full border border-border overflow-hidden shrink-0 flex items-center justify-center">
-            {nameInfo.avatar ? (
-              <img src={nameInfo.avatar} className="w-full h-full object-cover" style={{ objectPosition: `${nameInfo.x}% ${nameInfo.y}%`, transform: `scale(${nameInfo.scale})` }} />
-            ) : (
-              <div className="w-full h-full bg-muted text-muted-foreground flex items-center justify-center font-bold">{nameInfo.en.charAt(0)}</div>
-            )}
-          </div>
-          <div className="flex flex-col">
-            <span className="font-bold text-xs tracking-wide text-foreground">{language === 'vi' ? nameInfo.vi : nameInfo.en}</span>
-          </div>
-        </div>
-      </div>
+      {/* Back to top, bottom-right */}
+      <button
+        type="button"
+        onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+        aria-label="Back to top"
+        title="Back to top"
+        tabIndex={isScrolled ? 0 : -1}
+        className={cn(
+          "btn-raised fixed right-4 bottom-[max(1rem,env(safe-area-inset-bottom))] z-40 h-12 w-12 rounded-full text-foreground transition-[translate,scale,opacity,transform,box-shadow,border-color,color] duration-300 sm:right-6 sm:bottom-6",
+          isScrolled ? "translate-y-0 scale-100 opacity-100" : "pointer-events-none translate-y-12 scale-50 opacity-0",
+        )}
+      >
+        <ArrowUp className="h-5 w-5" />
+      </button>
     </>
   );
 }
-

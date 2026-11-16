@@ -1,619 +1,679 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useTheme } from "next-themes";
+import {
+  ArrowRight, Download, Edit2, Facebook, FileText, FolderOpen, Github, Instagram, Linkedin, Mail, MapPin, Phone, Terminal, User, X,
+} from "lucide-react";
 import { useAppContext } from "@/utils/providers";
 import { supabase } from "@/lib/supabase";
-import { Loader2, Edit2, Check, X, Mail, Facebook, Linkedin, Download, MapPin, Code2, Briefcase, Github, Instagram, Volume2, Link as LinkIcon, Phone, Clock, User, MessageSquare, Youtube, Twitter, Activity, Grid, Terminal, FolderArchive, FolderOpen } from "lucide-react";
-import { useTheme } from "next-themes";
-import LogoLoop from "@/components/ui/logo-loop";
+import { useNow } from "@/lib/use-now";
+import { isOngoing, pick, uploadToStorage } from "@/lib/format";
+import type { EducationItem, Profile, WorkExperience } from "@/types/portfolio";
 import SplitFlapText from "@/components/ui/split-flap-text";
-import { TLMarkIsometric } from "@/components/ui/tl-mark-isometric";
 import { TLMarkLightRays } from "@/components/ui/tl-mark-light-rays";
-import SpecularButton from "@/components/ui/specular-button";
+import TiltedCard from "@/components/ui/tilted card";
 import { RichTextEditor } from "@/components/ui/rich-text-editor";
+import { AdminForm, FormSection, Field, UploadButton, SaveCancel } from "@/components/ui/admin-form";
+import { LiveBadge, RichText } from "@/components/ui/blueprint";
+import { Overlay, useMounted } from "@/components/ui/overlay";
+import { Img } from "@/components/ui/img";
+import { cn } from "@/lib/utils";
 
-export function Hero({ initialProfile, initialStats }: { initialProfile: any, initialStats?: any }) {
+type ProfileRow = Partial<Profile> & { id?: string };
+
+const PHONE = "+84 378 661 398";
+const VN_OFFSET_MIN = 420; // UTC+7
+
+const DEFAULT_PROFILE: ProfileRow = {
+  full_name: "Le Duc Trong",
+  full_name_vi: "Lê Đức Trọng",
+  title: "Software Engineering Student",
+  title_vi: "Sinh viên Kỹ thuật Phần mềm",
+  location: "Vietnam",
+  location_vi: "Việt Nam",
+  work_format: "Full-time / Freelancer",
+  gender: "he/him",
+  avatar_x: 50,
+  avatar_y: 50,
+  avatar_scale: 1,
+};
+
+/** Columns that exist on `profiles`; anything else in the form state is dropped before saving. */
+const PROFILE_COLUMNS = [
+  "full_name", "full_name_vi", "title", "title_vi", "bio", "bio_vi", "avatar_url", "avatar_x", "avatar_y", "avatar_scale",
+  "cv_url", "email", "location", "location_vi", "work_format", "work_format_vi", "gender", "github_url", "linkedin_url",
+  "facebook_url", "instagram_url", "stats_languages", "stats_tools", "stats_experience",
+] as const;
+
+function avatarStyle(p: ProfileRow) {
+  return { objectPosition: `${p.avatar_x ?? 50}% ${p.avatar_y ?? 50}%`, transform: `scale(${p.avatar_scale || 1})` };
+}
+
+export function Hero({
+  initialProfile,
+  works = [],
+  educations = [],
+}: {
+  initialProfile: Profile | null;
+  works?: WorkExperience[];
+  educations?: EducationItem[];
+}) {
   const { t, isAdmin, language, colorTheme } = useAppContext();
   const { resolvedTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
+  const mounted = useMounted();
   const isDark = !mounted || resolvedTheme === "dark";
-  const accentColor = colorTheme === "blue" ? "#38bdf8" : "#34d399";
+  const accentHex = colorTheme === "blue" ? "#38bdf8" : "#6cc5b0";
 
-  const specularBaseColor = isDark ? "#3f3f46" : "#a1a1aa";
-  const specularLineColor = isDark ? "#ffffff" : "#18181b";
-  const specularTextColor = isDark ? "#f8fafc" : "#09090b";
-  const specularTintOpacity = isDark ? 0.12 : 0.22;
-
-  const defaultProfile = {
-    full_name: "Le Duc Trong",
-    title: "Software Engineering Student", title_vi: "Sinh viên Kỹ thuật Phần mềm",
-    bio: "", bio_vi: "",
-    avatar_url: "", avatar_x: 50, avatar_y: 50, avatar_scale: 1,
-    cv_url: "",
-    email: "", location: "Vietnam / Remote", work_format: "Full-time / Freelancer",
-    gender: "he/him",
-    github_url: "", linkedin_url: "", facebook_url: "", instagram_url: "",
-    stats_languages: 4, stats_tools: 6, stats_experience: 2,
-    skills: [] // Legacy
-  };
-
-  const [profile, setProfile] = useState(initialProfile || defaultProfile);
+  const [profile, setProfile] = useState<ProfileRow>(initialProfile ?? DEFAULT_PROFILE);
   const [isEditing, setIsEditing] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [uploadingImage, setUploadingImage] = useState(false);
-  const [uploadingCV, setUploadingCV] = useState(false);
-  const [showCvModal, setShowCvModal] = useState(false);
-  const [formData, setFormData] = useState(profile);
-  const [currentTime, setCurrentTime] = useState("");
-  const [timeDiffText, setTimeDiffText] = useState("");
+  const [showCv, setShowCv] = useState(false);
 
-  useEffect(() => {
-    const updateTime = () => {
-      const now = new Date();
-      setCurrentTime(now.toLocaleTimeString('en-US', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', hour12: true }));
+  const name = pick(language, profile.full_name, profile.full_name_vi) || "Le Duc Trong";
+  const title = pick(language, profile.title, profile.title_vi);
+  const location = pick(language, profile.location, profile.location_vi);
+  const workFormat = pick(language, profile.work_format, profile.work_format_vi);
+  const bio = pick(language, profile.bio, profile.bio_vi);
 
-      const viewerOffsetMinutes = -now.getTimezoneOffset();
-      const profileOffsetMinutes = 420; // UTC+7 Vietnam
-      const diffMinutes = profileOffsetMinutes - viewerOffsetMinutes;
-
-      if (diffMinutes === 0) {
-        setTimeDiffText(language === 'vi' ? "cùng múi giờ" : "same time");
-      } else {
-        const absHours = Math.abs(diffMinutes / 60);
-        const formattedHours = Number.isInteger(absHours) ? absHours.toString() : absHours.toFixed(1);
-        if (diffMinutes > 0) {
-          setTimeDiffText(language === 'vi' ? `đi trước ${formattedHours}h` : `${formattedHours}h ahead`);
-        } else {
-          setTimeDiffText(language === 'vi' ? `đi sau ${formattedHours}h` : `${formattedHours}h behind`);
-        }
+  // "Studying" card: ongoing education first, else the most recent one.
+  const visibleEdu = educations.filter((e) => !e.is_hidden);
+  const edu = visibleEdu.find((e) => isOngoing(e.start_date, e.end_date)) ?? visibleEdu[0];
+  const studyCard = edu
+    ? {
+        label: isOngoing(edu.start_date, edu.end_date) ? t.hero.studying : t.hero.graduated,
+        value: pick(language, edu.major, edu.major_vi) || pick(language, edu.school, edu.school_vi),
+        sub: pick(language, edu.school, edu.school_vi),
       }
-    };
-    updateTime();
-    const interval = setInterval(updateTime, 60000);
-    return () => clearInterval(interval);
-  }, [language]);
+    : { label: t.hero.studying, value: title, sub: "" };
 
-  const handleCVUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploadingCV(true);
-    const fileExt = file.name.split('.').pop();
-    const fileName = `cv_${Math.random()}.${fileExt}`;
-    const filePath = `profile/${fileName}`;
-    const { error: uploadError } = await supabase.storage.from('portfolio-images').upload(filePath, file);
-    if (!uploadError) {
-      const { data } = supabase.storage.from('portfolio-images').getPublicUrl(filePath);
-      setFormData({ ...formData, cv_url: data.publicUrl });
-    } else {
-      console.error(uploadError);
-      alert("Failed to upload CV. Please check your storage permissions.");
-    }
-    setUploadingCV(false);
-  };
+  // Highlighted card: the current role if there is one, else what I am open to.
+  const job = works.find((w) => !w.is_hidden && isOngoing(w.start_date, w.end_date));
+  const workCard = job
+    ? { label: t.hero.working, value: pick(language, job.role, job.role_vi), sub: pick(language, job.company, job.company_vi) }
+    : { label: t.hero.openTo, value: workFormat || "Full-time / Freelance", sub: title };
 
-  const [isDragging, setIsDragging] = useState(false);
-  const dragStartPos = useRef({ x: 0, y: 0 });
-  const dragStartPercent = useRef({ x: 50, y: 50 });
-
-  const handleSave = async () => {
-    setLoading(true);
-    const payload = { ...formData, full_name: formData.full_name || "Le Duc Trong" };
-
-    let res;
-    if (profile.id) {
-      res = await supabase.from('profiles').update(payload).eq('id', profile.id).select();
-    } else {
-      res = await supabase.from('profiles').insert([payload]).select();
-    }
-
-    if (!res.error && res.data) {
-      setProfile(res.data[0]);
-      setIsEditing(false);
-    }
-    setLoading(false);
-  };
-
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploadingImage(true);
-    const fileExt = file.name.split('.').pop();
-    const fileName = `avatar_${Math.random()}.${fileExt}`;
-    const filePath = `profile/${fileName}`;
-    const { error: uploadError } = await supabase.storage.from('portfolio-images').upload(filePath, file);
-    if (!uploadError) {
-      const { data } = supabase.storage.from('portfolio-images').getPublicUrl(filePath);
-      setFormData({ ...formData, avatar_url: data.publicUrl, avatar_scale: 1, avatar_x: 50, avatar_y: 50 });
-    }
-    setUploadingImage(false);
-  };
-
-  const handlePointerDown = (e: React.PointerEvent) => {
-    if (!isEditing || !formData.avatar_url) return;
-    setIsDragging(true);
-    dragStartPos.current = { x: e.clientX, y: e.clientY };
-    dragStartPercent.current = { x: Number(formData.avatar_x) ?? 50, y: Number(formData.avatar_y) ?? 50 };
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const handlePointerMove = (e: React.PointerEvent) => {
-    if (!isDragging) return;
-    const scale = Number(formData.avatar_scale) || 1;
-    const deltaX = (e.clientX - dragStartPos.current.x) * 0.3 / scale;
-    const deltaY = (e.clientY - dragStartPos.current.y) * 0.3 / scale;
-    setFormData({
-      ...formData,
-      avatar_x: Math.max(0, Math.min(100, Math.round(dragStartPercent.current.x - deltaX))),
-      avatar_y: Math.max(0, Math.min(100, Math.round(dragStartPercent.current.y - deltaY)))
-    });
-  };
-  const handlePointerUp = (e: React.PointerEvent) => {
-    if (isDragging) { setIsDragging(false); e.currentTarget.releasePointerCapture(e.pointerId); }
-  };
-
-  const displayFullName = language === 'vi' ? (profile.full_name_vi || profile.full_name || "Lê Đức Trọng") : (profile.full_name || "Le Duc Trong");
-  const displayTitle = language === 'vi' ? (profile.title_vi || profile.title || defaultProfile.title_vi) : (profile.title || defaultProfile.title);
-  const displayBio = language === 'vi' ? (profile.bio_vi || profile.bio) : profile.bio;
+  const socials = [
+    { href: profile.github_url, label: "GitHub", icon: Github },
+    { href: profile.linkedin_url, label: "LinkedIn", icon: Linkedin },
+    { href: profile.facebook_url, label: "Facebook", icon: Facebook },
+    { href: profile.instagram_url, label: "Instagram", icon: Instagram },
+  ].filter((s) => !!s.href);
 
   return (
-    <section id="hero" className="pt-24 pb-12 relative group flex flex-col justify-center min-h-[85vh]">
-      {isAdmin && !isEditing && (
-        <button onClick={() => { setFormData(profile); setIsEditing(true); }} className="absolute top-28 right-4 flex items-center gap-2 px-4 py-2 hover:bg-muted bg-card text-foreground border border-border rounded-md font-sans font-medium text-xs z-40 transition-colors">
-          <Edit2 className="w-3.5 h-3.5" /> Edit Data
-        </button>
-      )}
-
-      {isEditing ? (
-        <div className="space-y-6 max-w-4xl bg-card p-6 md:p-8 rounded-xl border border-border shadow-2xl mx-auto w-full z-10 font-sans">
-          <div className="flex justify-between border-b border-border pb-3 items-center">
-            <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
-              Edit Profile Data
-            </span>
-            <span className="text-xs text-muted-foreground font-mono">Admin Mode</span>
-          </div>
-
-          <div className="space-y-6">
-            {/* Section 1: English Basic Info */}
-            <div className="space-y-3">
-              <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Basic Information (EN)</span>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Full Name (EN)</label>
-                  <input value={formData.full_name || ""} onChange={e => setFormData({ ...formData, full_name: e.target.value })} className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none" placeholder="English Name" />
-                </div>
-                <div>
-                  <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Professional Title (EN)</label>
-                  <input value={formData.title || ""} onChange={e => setFormData({ ...formData, title: e.target.value })} className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none" placeholder="Professional Title (EN)" />
-                </div>
-              </div>
-            </div>
-
-            {/* Section 2: Vietnamese Information */}
-            <div className="border-t border-border pt-4 space-y-3">
-              <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Vietnamese Information (VI)</span>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Full Name (VI)</label>
-                  <input value={formData.full_name_vi || ""} onChange={e => setFormData({ ...formData, full_name_vi: e.target.value })} className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none" placeholder="Vietnamese Name" />
-                </div>
-                <div>
-                  <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Professional Title (VI)</label>
-                  <input value={formData.title_vi || ""} onChange={e => setFormData({ ...formData, title_vi: e.target.value })} className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none" placeholder="Professional Title (VI)" />
-                </div>
-              </div>
-            </div>
-
-            {/* Section 3: Biography */}
-            <div className="border-t border-border pt-4 space-y-3">
-              <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Biography</span>
-              <div className="grid grid-cols-1 gap-4">
-                <div>
-                  <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Bio (EN) — English Biography</label>
-                  <RichTextEditor
-                    value={formData.bio || ""}
-                    onChange={html => setFormData({ ...formData, bio: html })}
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Bio (VI) — Vietnamese Biography</label>
-                  <RichTextEditor
-                    value={formData.bio_vi || ""}
-                    onChange={html => setFormData({ ...formData, bio_vi: html })}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Section 4: Contact & Social Links */}
-            <div className="border-t border-border pt-4 space-y-3">
-              <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Contact & Social Links</span>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Email</label>
-                  <input type="email" value={formData.email || ""} onChange={e => setFormData({ ...formData, email: e.target.value })} className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none" placeholder="Email" />
-                </div>
-                <div>
-                  <label className="text-[10px] font-semibold text-muted-foreground block mb-1">GitHub URL</label>
-                  <input value={formData.github_url || ""} onChange={e => setFormData({ ...formData, github_url: e.target.value })} className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none" placeholder="GitHub URL" />
-                </div>
-                <div>
-                  <label className="text-[10px] font-semibold text-muted-foreground block mb-1">LinkedIn URL</label>
-                  <input value={formData.linkedin_url || ""} onChange={e => setFormData({ ...formData, linkedin_url: e.target.value })} className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none" placeholder="LinkedIn URL" />
-                </div>
-                <div>
-                  <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Facebook URL</label>
-                  <input value={formData.facebook_url || ""} onChange={e => setFormData({ ...formData, facebook_url: e.target.value })} className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none" placeholder="Facebook URL" />
-                </div>
-              </div>
-            </div>
-
-            {/* Section 5: Location & Personal Details */}
-            <div className="border-t border-border pt-4 space-y-3">
-              <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Location & Personal Details</span>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div>
-                  <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Location / Country</label>
-                  <input
-                    list="country-options"
-                    value={formData.location || ""}
-                    onChange={e => setFormData({ ...formData, location: e.target.value })}
-                    className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none"
-                    placeholder="e.g. Vietnam / Remote"
-                  />
-                  <datalist id="country-options">
-                    <option value="Vietnam" />
-                    <option value="Vietnam / Remote" />
-                    <option value="United States" />
-                    <option value="Japan" />
-                    <option value="Singapore" />
-                    <option value="Australia" />
-                    <option value="United Kingdom" />
-                    <option value="Canada" />
-                    <option value="Germany" />
-                    <option value="Remote / Worldwide" />
-                  </datalist>
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Years of Experience</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="50"
-                    value={formData.years_of_experience ?? formData.experience_years ?? 3}
-                    onChange={e => setFormData({ ...formData, years_of_experience: Number(e.target.value), experience_years: Number(e.target.value) })}
-                    className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none"
-                    placeholder="e.g. 3"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Gender / Pronouns</label>
-                  <div className="flex flex-wrap gap-2 pt-0.5">
-                    {[
-                      { label: "he/him", value: "he/him" },
-                      { label: "she/her", value: "she/her" },
-                      { label: "they/them", value: "they/them" }
-                    ].map(option => (
-                      <label
-                        key={option.value}
-                        className={`cursor-pointer px-3 py-1.5 rounded-md border text-xs font-mono transition-all flex items-center gap-2 select-none ${(formData.gender || "he/him") === option.value
-                          ? "border-foreground bg-foreground/10 text-foreground font-semibold shadow-sm"
-                          : "border-border bg-background hover:bg-muted text-muted-foreground"
-                          }`}
-                      >
-                        <input
-                          type="radio"
-                          name="gender-radio"
-                          value={option.value}
-                          checked={(formData.gender || "he/him") === option.value}
-                          onChange={e => setFormData({ ...formData, gender: e.target.value })}
-                          className="accent-foreground w-3.5 h-3.5 cursor-pointer"
-                        />
-                        <span>{option.label}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Section 6: Avatar Configuration (MOVED TO BOTTOM) */}
-            <div className="border-t border-border pt-4 space-y-3">
-              <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Avatar Configuration</span>
-              <div className="flex flex-col items-center p-6 bg-background/50 rounded-xl border border-border space-y-4">
-                <label className="cursor-pointer bg-foreground text-background px-6 py-2.5 rounded-md text-sm font-medium flex items-center gap-2 hover:opacity-90 transition-opacity">
-                  <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
-                  {uploadingImage ? <Loader2 className="w-4 h-4 animate-spin" /> : "Upload New Avatar"}
-                </label>
-
-                {formData.avatar_url && (
-                  <div className="w-full flex flex-col md:flex-row items-center gap-6 bg-card p-6 rounded-xl border border-border">
-                    <div className="w-36 h-36 rounded-full border-2 border-border relative bg-muted cursor-grab active:cursor-grabbing overflow-hidden shadow-inner group shrink-0"
-                      onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp}>
-                      <img src={formData.avatar_url} draggable="false" className="w-full h-full object-cover pointer-events-none select-none"
-                        style={{ objectPosition: `${formData.avatar_x ?? 50}% ${formData.avatar_y ?? 50}%`, transform: `scale(${formData.avatar_scale || 1})` }} alt="Avatar preview" />
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[10px] font-mono text-white text-center p-2 pointer-events-none">
-                        Drag to position avatar
-                      </div>
-                    </div>
-
-                    <div className="w-full space-y-3 text-xs font-mono">
-                      <div className="flex flex-col gap-1 w-full">
-                        <div className="flex justify-between text-muted-foreground">
-                          <span>Zoom Scale</span>
-                          <span className="text-foreground font-semibold">{formData.avatar_scale || 1}x</span>
-                        </div>
-                        <input type="range" min="1" max="4" step="0.1" value={formData.avatar_scale || 1} onChange={e => setFormData({ ...formData, avatar_scale: Number(e.target.value) })} className="w-full accent-foreground" />
-                      </div>
-                      <div className="flex flex-col gap-1 w-full">
-                        <div className="flex justify-between text-muted-foreground">
-                          <span>Position X (Horizontal)</span>
-                          <span className="text-foreground font-semibold">{formData.avatar_x ?? 50}%</span>
-                        </div>
-                        <input type="range" min="0" max="100" step="1" value={formData.avatar_x ?? 50} onChange={e => setFormData({ ...formData, avatar_x: Number(e.target.value) })} className="w-full accent-foreground" />
-                      </div>
-                      <div className="flex flex-col gap-1 w-full">
-                        <div className="flex justify-between text-muted-foreground">
-                          <span>Position Y (Vertical)</span>
-                          <span className="text-foreground font-semibold">{formData.avatar_y ?? 50}%</span>
-                        </div>
-                        <input type="range" min="0" max="100" step="1" value={formData.avatar_y ?? 50} onChange={e => setFormData({ ...formData, avatar_y: Number(e.target.value) })} className="w-full accent-foreground" />
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Section 7: Curriculum Vitae (PDF) Upload (MOVED TO BOTTOM) */}
-            <div className="border-t border-border pt-4 space-y-3">
-              <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Curriculum Vitae (PDF)</span>
-              <div className="p-4 bg-background/50 rounded-xl border border-border flex flex-col items-center space-y-3">
-                <label className="cursor-pointer bg-card text-foreground border border-border px-6 py-2.5 rounded-md text-sm font-medium flex items-center gap-2 hover:bg-muted transition-colors">
-                  <input type="file" accept=".pdf,application/pdf" onChange={handleCVUpload} className="hidden" />
-                  {uploadingCV ? <Loader2 className="w-4 h-4 animate-spin" /> : "Upload New CV (PDF)"}
-                </label>
-
-                {formData.cv_url && (
-                  <div className="w-full p-3 bg-muted/50 rounded-lg border border-border/80 flex items-center gap-3">
-                    <FolderOpen className="w-5 h-5 text-primary shrink-0" />
-                    <div className="flex flex-col overflow-hidden text-xs">
-                      <span className="font-semibold text-foreground truncate">
-                        {formData.cv_url.split('/').pop()?.split('?')[0] || "document.pdf"}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground truncate">PDF File Ready</span>
-                    </div>
-                    <a href={formData.cv_url} target="_blank" rel="noreferrer" className="ml-auto text-[10px] underline text-muted-foreground hover:text-foreground">
-                      Preview
-                    </a>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex justify-end gap-3 pt-5 border-t border-border mt-8">
-            <button onClick={() => setIsEditing(false)} className="px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-muted transition-colors">
-              Cancel
+    <section id="hero" className="scroll-mt-24 pt-24 pb-4 font-sans md:pt-28">
+      {/* ── Row 1: identity · viewfinder · info cards · connect ── */}
+      <div className="grid grid-cols-1 gap-4 md:gap-5 lg:grid-cols-12 lg:gap-6">
+        {/* Identity */}
+        <div data-reveal className="flex min-w-0 flex-col gap-5 lg:col-span-8 lg:justify-center">
+          <span className="kicker">01 — Portfolio · {title}</span>
+          <h1 className="font-display text-[clamp(1.9rem,7.6vw,3.75rem)] font-extrabold uppercase leading-[1.12] tracking-tight text-balance text-[hsl(var(--brand-ink))] lg:text-[clamp(3.25rem,5.4vw,4.75rem)]">
+            <span aria-hidden className="opacity-70">[</span>
+            {name}
+            <span aria-hidden className="opacity-70">]</span>
+          </h1>
+          <div className="flex flex-wrap gap-3">
+            <a href="#projects" className="btn-raised btn-accent h-12 px-5 text-sm font-semibold">
+              {t.hero.explore} <ArrowRight className="h-4 w-4" />
+            </a>
+            <button type="button" onClick={() => setShowCv(true)} className="btn-raised h-12 px-5 text-sm font-semibold text-foreground">
+              <FileText className="h-4 w-4" /> {t.hero.viewCV}
             </button>
-            <button onClick={handleSave} disabled={loading} className="px-6 py-2 bg-foreground text-background text-sm font-medium rounded-md flex items-center hover:opacity-90 transition-opacity">
-              {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : "Save Profile"}
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="max-w-4xl mx-auto w-full z-10 font-mono flex flex-col relative">
-          <div className="border border-border/50 rounded-sm bg-background/50 backdrop-blur-sm shadow-2xl overflow-hidden flex flex-col relative z-20">
-            {/* Header row: Profile Avatar & Name with integrated 3D 'TL' Mark + WebGL Light Rays as Full Background */}
-            <div className="flex items-end gap-6 p-6 md:p-8 border-b border-border/50 relative overflow-hidden min-h-[260px] md:min-h-[300px]">
-              {/* Integrated Top Decorative Graphic Background */}
-              <TLMarkLightRays raysColor={accentColor} raysOrigin="top-right" />
-
-              {/* Header profile content */}
-              <div className="relative z-10 flex items-end gap-6 w-full">
-                <div className="w-24 h-24 md:w-32 md:h-32 rounded-full overflow-hidden border border-border shrink-0 bg-muted">
-                  {profile.avatar_url && (
-                    <img src={profile.avatar_url} alt="Profile" className="w-full h-full object-cover"
-                      style={{ objectPosition: `${profile.avatar_x ?? 50}% ${profile.avatar_y ?? 50}%`, transform: `scale(${profile.avatar_scale || 1})` }} />
-                  )}
-                </div>
-                <div className="flex flex-col gap-2 pb-2">
-                  <div className="flex items-center gap-2.5">
-                    <h1 className="text-2xl md:text-3xl font-sans font-bold text-foreground tracking-tight leading-none">{displayFullName}</h1>
-                    <div className="w-5 h-5 rounded-full bg-foreground text-background inline-flex items-center justify-center shrink-0 self-center">
-                      <Check className="w-3 h-3" strokeWidth={3} />
-                    </div>
-                  </div>
-                  <p className="text-sm text-muted-foreground font-mono">
-                    I am a {displayTitle.toLowerCase()}.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Info Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-border/50 text-sm text-muted-foreground font-mono">
-              {/* Left Column */}
-              <div className="flex flex-col p-6 gap-4">
-                <div className="flex items-center gap-4">
-                  <Code2 className="w-5 h-5 shrink-0" />
-                  <span className="truncate">{displayTitle}</span>
-                </div>
-                <div className="flex items-center gap-4">
-                  <Briefcase className="w-5 h-5 shrink-0" />
-                  <span className="truncate">Freelancer / Full time</span>
-                </div>
-                <div className="flex items-center gap-4">
-                  <MapPin className="w-5 h-5 shrink-0" />
-                  <span className="truncate">{profile.location}</span>
-                </div>
-                <div className="flex items-center gap-4">
-                  <Phone className="w-5 h-5 shrink-0" />
-                  <span className="truncate">+84 378 661 398</span>
-                </div>
-              </div>
-
-              {/* Right Column */}
-              <div className="flex flex-col p-6 gap-4">
-                <div className="flex items-center gap-4">
-                  <Clock className="w-5 h-5 shrink-0" />
-                  <span className="truncate">{currentTime || "Loading..."} <span className="opacity-50">// {timeDiffText || "same time"}</span></span>
-                </div>
-                <div className="flex items-center gap-4">
-                  <Mail className="w-5 h-5 shrink-0" />
-                  <a href={`mailto:${profile.email}`} className="truncate hover:text-foreground transition-colors underline underline-offset-2 decoration-border hover:decoration-foreground">{profile.email || "hello@example.com"}</a>
-                </div>
-                <div className="flex items-center gap-4">
-                  <User className="w-5 h-5 shrink-0" />
-                  <span className="truncate">{profile.gender || "he/him"}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Social Links Bar */}
-            <div className="border-t border-border/50 p-6 flex items-center gap-4">
-              {profile.github_url && <a href={profile.github_url} target="_blank" rel="noreferrer" className="w-10 h-10 rounded border border-border/50 flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"><Github className="w-5 h-5" /></a>}
-              {profile.linkedin_url && <a href={profile.linkedin_url} target="_blank" rel="noreferrer" className="w-10 h-10 rounded border border-border/50 flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"><Linkedin className="w-5 h-5" /></a>}
-              <a href="#" className="w-10 h-10 rounded border border-border/50 flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"><Twitter className="w-5 h-5" /></a>
-              {profile.facebook_url && <a href={profile.facebook_url} target="_blank" rel="noreferrer" className="w-10 h-10 rounded border border-border/50 flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"><Facebook className="w-5 h-5" /></a>}
-
-              {/* CV SpecularButton triggering popup modal */}
-              <div className="ml-auto shrink-0">
-                <SpecularButton
-                  size="sm"
-                  radius={8}
-                  autoAnimate={true}
-                  speed={0.4}
-                  baseColor={specularBaseColor}
-                  lineColor={specularLineColor}
-                  textColor={specularTextColor}
-                  tint={accentColor}
-                  tintOpacity={specularTintOpacity}
-                  onClick={() => setShowCvModal(true)}
-                  className={`flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-wider px-4 py-2.5 shadow-sm border transition-all ${isDark
-                    ? "border-white/10 hover:border-white/25 text-slate-100"
-                    : "border-black/15 hover:border-black/35 text-slate-900 bg-white/80"
-                    }`}
-                >
-                  <span>CV / Resume</span>
-                </SpecularButton>
-              </div>
-            </div>
-
-            {/* Split Flap Board (Prominent 1.5x Display - Theme Optimized) */}
-            <div className="border-t border-border/50 p-6 md:p-8 flex flex-col gap-5 bg-card/30">
-              <div className="flex items-center justify-between border-b border-border/40 pb-3">
-                <span className="text-xs font-bold uppercase tracking-widest text-foreground/80 flex items-center gap-2 font-mono">
-                  <Terminal className="w-4 h-4" style={{ color: accentColor }} />
-                  System Status Board
-                </span>
-                <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest px-2.5 py-1 rounded bg-muted/60 border border-border/40 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: accentColor }}></span>
-                  Live Signal
-                </span>
-              </div>
-
-              <div className={`py-10 px-4 md:px-8 rounded-xl border flex flex-col items-center justify-center overflow-x-auto min-h-[180px] shadow-inner transition-colors duration-200 ${isDark
-                ? "bg-background/90 border-border/60"
-                : "bg-slate-100/90 border-slate-300/80"
-                }`}>
-                <SplitFlapText
-                  words={[
-                    'LE DUC TRONG',
-                    'FULLSTACK DEV',
-                    'REACT & NEXTJS',
-                    'SIGNAL ONLINE',
-                    'AVAILABLE NOW',
-                    'CLEAN ARCHITECTURE'
-                  ]}
-                  tileColor={isDark ? "#0f172a" : "#18181b"}
-                  textColor="#ffffff"
-                  fontSize="clamp(28px, 5.2vw, 54px)"
-                  gap={8}
-                  tileRadius={8}
-                  padTo={14}
-                  className="max-w-full"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Bio Section */}
-          <div className="mt-16 text-base font-sans space-y-6 px-4 md:px-6 text-muted-foreground max-w-4xl border-t border-border/50 pt-12">
-            <h3 className="font-serif italic text-3xl md:text-4xl text-foreground mb-8">Good evening</h3>
-
-            {displayBio ? (
-              <div
-                className="space-y-4 leading-relaxed text-base md:text-lg pl-6 border-l-2 border-primary/40 text-foreground/90 font-sans tracking-wide [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1.5"
-                dangerouslySetInnerHTML={{ __html: displayBio }}
-              />
-            ) : (
-              <ul className="space-y-4 list-disc pl-6 leading-relaxed text-base md:text-lg">
-                <li>I'm <span className="text-foreground font-semibold">{displayFullName}</span> — a {displayTitle} with a passion for clean code, solid architecture, and pixel-perfect UI.</li>
-                <li>Focused on exploring new technologies and turning ideas into reality through polished, thoughtfully crafted projects.</li>
-                <li>Available for full-time roles, freelance projects, and open-source contributions.</li>
-              </ul>
+            {isAdmin && (
+              <button type="button" onClick={() => setIsEditing(true)} className="btn-raised h-12 px-4 font-mono text-xs font-semibold uppercase tracking-wider text-foreground">
+                <Edit2 className="h-3.5 w-3.5" /> {t.admin.editProfile}
+              </button>
             )}
           </div>
         </div>
-      )}
 
-      {/* CV PDF Popup Modal */}
-      {showCvModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 md:p-8 animate-in fade-in duration-200">
-          <div className="max-w-5xl w-full h-[85vh] bg-card border border-border rounded-xl flex flex-col shadow-2xl overflow-hidden relative">
-            {/* Modal Header */}
-            <div className="p-4 border-b border-border flex items-center justify-between bg-muted/40 font-mono">
-              <div className="flex items-center gap-2.5">
-                <FolderOpen className="w-5 h-5 text-primary" />
-                <h3 className="font-bold text-sm text-foreground">Curriculum Vitae (PDF)</h3>
-              </div>
-              <div className="flex items-center gap-3">
-                {profile.cv_url && (
-                  <a
-                    href={profile.cv_url}
-                    download
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-xs px-3 py-1.5 rounded border border-border hover:bg-muted transition-colors flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
-                  >
-                    <Download className="w-3.5 h-3.5" /> Download
-                  </a>
-                )}
-                <button
-                  onClick={() => setShowCvModal(false)}
-                  className="w-8 h-8 rounded-full hover:bg-muted flex items-center justify-center transition-colors text-muted-foreground hover:text-foreground"
-                  aria-label="Close CV viewer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
+        {/* Viewfinder with the TL mark, on a 3D tilt card: second on phones, a tall right column on laptops */}
+        <div data-reveal className="aspect-[4/3] sm:aspect-[16/10] lg:col-span-4 lg:col-start-9 lg:row-span-3 lg:row-start-1 lg:aspect-auto lg:min-h-[500px]">
+          <TiltedCard
+            containerWidth="100%"
+            containerHeight="100%"
+            imageWidth="100%"
+            imageHeight="100%"
+            radius={18}
+            rotateAmplitude={9}
+            scaleOnHover={1.03}
+            glare={0.35}
+            shadow={0.55}
+            showTooltip={false}
+            flipOnClick={false}
+            gyroscope={false}
+            intro={false}
+          >
+            <div className="panel-raised no-hover h-full w-full p-2.5 sm:p-3">
+              <Viewfinder accentHex={accentHex} />
             </div>
+          </TiltedCard>
+        </div>
 
-            {/* Modal Body: PDF Viewer */}
-            <div className="flex-1 bg-neutral-900 relative">
-              {profile.cv_url ? (
-                <iframe
-                  src={profile.cv_url}
-                  className="w-full h-full border-0"
-                  title="CV PDF Document Viewer"
-                />
-              ) : (
-                <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground p-8 text-center font-mono">
-                  <FolderOpen className="w-12 h-12 mb-3 opacity-40" />
-                  <p>No CV document uploaded yet.</p>
-                </div>
+        {/* Three info cards */}
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:col-span-8 lg:gap-5">
+          <InfoCard label={studyCard.label} value={studyCard.value} sub={studyCard.sub} />
+          <InfoCard label={workCard.label} value={workCard.value} sub={workCard.sub} accent />
+          <LocationCard label={t.hero.basedIn} location={location || "Vietnam"} t={t} className="col-span-2 sm:col-span-1" />
+        </div>
+
+        {/* Connect */}
+        <div className="panel-raised flex flex-col gap-5 p-5 md:p-6 lg:col-span-8 lg:flex-row lg:items-end lg:justify-between">
+          <div className="flex min-w-0 flex-col gap-4">
+            <span className="kicker">{t.hero.connect}</span>
+            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:gap-x-6">
+              {profile.email && (
+                <a href={`mailto:${profile.email}`} className="group flex min-w-0 items-center gap-3">
+                  <span className="tile-raised h-10 w-10 shrink-0 text-muted-foreground group-hover:text-foreground">
+                    <Mail className="h-4 w-4" />
+                  </span>
+                  <span className="truncate font-mono text-sm text-muted-foreground underline decoration-border underline-offset-4 transition-colors group-hover:text-foreground">
+                    {profile.email}
+                  </span>
+                </a>
               )}
+              <a href={`tel:${PHONE.replace(/\s/g, "")}`} className="group flex min-w-0 items-center gap-3">
+                <span className="tile-raised h-10 w-10 shrink-0 text-muted-foreground group-hover:text-foreground">
+                  <Phone className="h-4 w-4" />
+                </span>
+                <span className="truncate font-mono text-sm text-muted-foreground transition-colors group-hover:text-foreground">{PHONE}</span>
+              </a>
             </div>
           </div>
+          {socials.length > 0 && (
+            <div className="flex flex-wrap gap-3">
+              {socials.map(({ href, label, icon: Icon }) => (
+                <a key={label} href={href} target="_blank" rel="noreferrer" aria-label={label} title={label} className="btn-raised h-11 w-11">
+                  <Icon className="h-5 w-5" />
+                </a>
+              ))}
+            </div>
+          )}
         </div>
+      </div>
+
+      {/* ── Row 2: about · numbers ── */}
+      <div className="mt-6 grid grid-cols-1 gap-4 md:gap-5 lg:mt-8 lg:grid-cols-12 lg:gap-6">
+        <article className="panel-raised flex flex-col gap-4 p-5 md:p-7 lg:col-span-7">
+          <span className="kicker">{t.hero.about}</span>
+          <Greeting t={t} />
+          {bio ? (
+            <RichText html={bio} className="text-base text-foreground/85 md:text-[17px]" />
+          ) : (
+            <p className="text-base leading-relaxed text-foreground/85">
+              {name} — {title}. Clean code, solid architecture and pixel-perfect UI.
+            </p>
+          )}
+        </article>
+
+        <article className="panel-raised flex flex-col gap-5 p-5 md:p-7 lg:col-span-5">
+          <span className="kicker">{t.hero.numbers}</span>
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { value: profile.stats_languages, label: t.hero.statLanguages },
+              { value: profile.stats_tools, label: t.hero.statTools },
+              { value: profile.stats_experience, label: t.hero.statYears },
+            ].map((s) => (
+              <div key={s.label} className="well-recessed flex min-w-0 flex-col gap-1 px-3 py-4">
+                <span className="font-display text-3xl font-bold leading-none text-foreground md:text-4xl">
+                  {String(s.value ?? 0).padStart(2, "0")}
+                  <span className="text-[hsl(var(--brand-ink))]">+</span>
+                </span>
+                <span className="truncate font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{s.label}</span>
+              </div>
+            ))}
+          </div>
+          <dl className="flex flex-col divide-y divide-border/60 text-sm">
+            {[
+              { label: t.hero.workFormat, value: workFormat },
+              { label: t.hero.basedIn, value: location },
+              { label: t.hero.pronouns, value: profile.gender || "he/him" },
+            ]
+              .filter((f) => f.value)
+              .map((f) => (
+                <div key={f.label} className="flex items-baseline justify-between gap-4 py-2.5">
+                  <dt className="shrink-0 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">{f.label}</dt>
+                  <dd className="min-w-0 text-right font-medium text-foreground/90">{f.value}</dd>
+                </div>
+              ))}
+          </dl>
+        </article>
+      </div>
+
+      {/* ── Row 3: status board ── */}
+      <div className="panel-raised mt-6 flex flex-col gap-4 p-4 md:p-6 lg:mt-8">
+        <div className="flex items-center justify-between gap-3">
+          <span className="kicker inline-flex items-center gap-2">
+            <Terminal className="h-3.5 w-3.5" /> {t.hero.statusBoard}
+          </span>
+          <LiveBadge>{t.hero.liveSignal}</LiveBadge>
+        </div>
+        <div className="well-recessed px-3 py-8 md:px-8 md:py-12">
+          {/* Font size follows the well's width so all 14 tiles always fit (14 × 0.78em + 13 × 0.12em ≈ 12.5em) */}
+          <div className="flex justify-center [container-type:inline-size]">
+            <SplitFlapText
+              words={["LE DUC TRONG", "FULLSTACK DEV", "REACT & NEXTJS", "SIGNAL ONLINE", "AVAILABLE NOW", "CLEAN CODE"]}
+              tileColor={isDark ? (colorTheme === "blue" ? "#0f1b2e" : "#0f2527") : "#18181b"}
+              textColor="#ffffff"
+              fontSize="min(56px, calc((100cqw - 4px) / 12.6))"
+              gap="0.12em"
+              tileRadius={8}
+              padTo={14}
+              className="max-w-full"
+            />
+          </div>
+        </div>
+      </div>
+
+      {isEditing && (
+        <ProfileForm
+          profile={profile}
+          onCancel={() => setIsEditing(false)}
+          onSaved={(saved) => {
+            setProfile(saved);
+            setIsEditing(false);
+          }}
+        />
       )}
+
+      {showCv && <CvViewer url={profile.cv_url} onClose={() => setShowCv(false)} />}
     </section>
+  );
+}
+
+/* ───────────────────────── display pieces ───────────────────────── */
+
+function InfoCard({ label, value, sub, accent, className }: { label: string; value: string; sub?: string; accent?: boolean; className?: string }) {
+  return (
+    <div className={cn("panel-raised flex min-h-[132px] min-w-0 flex-col justify-between gap-4 p-4 md:min-h-[150px] md:p-5", accent && "panel-accent", className)}>
+      <span className="kicker">{label}</span>
+      <div className="flex min-w-0 flex-col gap-1">
+        <span className={cn("line-clamp-3 font-display text-base font-bold leading-snug md:text-xl", accent ? "text-[hsl(var(--on-accent))]" : "text-foreground")}>
+          {value}
+        </span>
+        {sub && (
+          <span className={cn("truncate text-xs", accent ? "text-[hsl(var(--on-accent)/0.7)]" : "text-muted-foreground")}>{sub}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Location with the live local time and the offset from the viewer's time zone. */
+function LocationCard({ label, location, t, className }: { label: string; location: string; t: ReturnType<typeof useAppContext>["t"]; className?: string }) {
+  const now = useNow(30_000);
+  let time = "--:--";
+  let diff = "";
+  if (now !== null) {
+    const d = new Date(now);
+    time = d.toLocaleTimeString("en-GB", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" });
+    const diffMin = VN_OFFSET_MIN + d.getTimezoneOffset();
+    if (diffMin === 0) diff = t.hero.sameTime;
+    else {
+      const h = Math.abs(diffMin / 60);
+      const hours = Number.isInteger(h) ? String(h) : h.toFixed(1);
+      diff = diffMin > 0 ? `${hours}h ${t.hero.ahead}` : `${hours}h ${t.hero.behind}`;
+    }
+  }
+  return (
+    <div className={cn("panel-raised flex min-h-[132px] min-w-0 flex-col justify-between gap-4 p-4 md:min-h-[150px] md:p-5", className)}>
+      <span className="kicker">{label}</span>
+      <div className="flex items-end justify-between gap-3 sm:flex-col sm:items-start sm:gap-1">
+        <span className="flex items-center gap-1.5 font-display text-base font-bold text-foreground md:text-xl">
+          <MapPin className="h-4 w-4 shrink-0 text-[hsl(var(--brand-ink))]" />
+          <span className="truncate">{location}</span>
+        </span>
+        <span className="font-mono text-xs text-muted-foreground" suppressHydrationWarning>
+          <span className="text-foreground/90">{time}</span>
+          {diff && <span className="opacity-70"> · {diff}</span>}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function Greeting({ t }: { t: ReturnType<typeof useAppContext>["t"] }) {
+  const now = useNow(60_000);
+  const hour = now === null ? 12 : new Date(now).getHours();
+  const text = hour < 12 ? t.hero.morning : hour < 18 ? t.hero.afternoon : t.hero.evening;
+  return <h3 className="font-display text-2xl font-bold tracking-tight text-foreground md:text-3xl">{text}</h3>;
+}
+
+/** HH:MM:SS timecode for the viewfinder HUD (Vietnam time). */
+function Timecode() {
+  const now = useNow(1000);
+  const text =
+    now === null
+      ? "00:00:00"
+      : new Date(now).toLocaleTimeString("en-GB", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return <span className="tabular-nums">{text}</span>;
+}
+
+/** Camera viewfinder framing the isometric TL mark, with a REC HUD. Fills its parent. */
+function Viewfinder({ accentHex }: { accentHex: string }) {
+  return (
+    <div className="viewfinder h-full w-full">
+      <TLMarkLightRays
+        raysColor={accentHex}
+        raysOrigin="top-center"
+        glowAt="50% 42%"
+        markClassName="absolute left-1/2 top-[46%] w-[112%] -translate-x-1/2 -translate-y-[40%] sm:w-[100%] lg:w-[172%]"
+      />
+
+      {/* Corner brackets */}
+      <span aria-hidden className="vf-corner left-3 top-3 z-30 rounded-tl-md border-t-2 border-l-2" />
+      <span aria-hidden className="vf-corner right-3 top-3 z-30 rounded-tr-md border-t-2 border-r-2" />
+      <span aria-hidden className="vf-corner bottom-3 left-3 z-30 rounded-bl-md border-b-2 border-l-2" />
+      <span aria-hidden className="vf-corner bottom-3 right-3 z-30 rounded-br-md border-r-2 border-b-2" />
+
+      {/* HUD: top */}
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center justify-between px-6 pt-4 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+        <span>TL · Cam A</span>
+        <span className="flex items-center gap-1.5 text-foreground/80">
+          <span className="h-2 w-2 rounded-full bg-red-500 motion-safe:animate-pulse" /> Rec
+        </span>
+        <Timecode />
+      </div>
+
+      {/* HUD: bottom — capture settings */}
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex items-end justify-between gap-3 px-6 pb-4 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+        <span>AF · On</span>
+        <span>4K · 24fps · ISO 400</span>
+      </div>
+    </div>
+  );
+}
+
+function CvViewer({ url, onClose }: { url?: string; onClose: () => void }) {
+  return (
+    <Overlay placement="sheet" onClose={onClose} labelledBy="cv-title">
+      <div className="sheet-panel animate-sheet-in flex h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl sm:h-[88dvh] sm:max-w-5xl sm:rounded-2xl">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/60 px-4 py-3 sm:px-5">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="tile-raised h-10 w-10 shrink-0 text-[hsl(var(--brand-ink))]">
+              <FolderOpen className="h-4 w-4" />
+            </span>
+            <h3 id="cv-title" className="truncate font-display text-base font-bold text-foreground">
+              Curriculum Vitae
+            </h3>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {url && (
+              <a href={url} download target="_blank" rel="noreferrer" className="btn-raised h-10 px-3 font-mono text-xs font-semibold text-foreground">
+                <Download className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Download</span>
+              </a>
+            )}
+            <button type="button" onClick={onClose} className="btn-raised h-10 w-10 rounded-full" aria-label="Close CV viewer">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+        <div className="relative flex-1 bg-neutral-900">
+          {url ? (
+            <iframe src={url} className="h-full w-full border-0" title="CV PDF document" />
+          ) : (
+            <div className="flex h-full w-full flex-col items-center justify-center p-8 text-center font-mono text-muted-foreground">
+              <FolderOpen className="mb-3 h-12 w-12 opacity-40" />
+              <p>No CV document uploaded yet.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </Overlay>
+  );
+}
+
+/* ───────────────────────── admin ───────────────────────── */
+
+function ProfileForm({ profile, onCancel, onSaved }: { profile: ProfileRow; onCancel: () => void; onSaved: (p: ProfileRow) => void }) {
+  const [form, setForm] = useState<ProfileRow>(profile);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [uploadingCv, setUploadingCv] = useState(false);
+
+  const set = <K extends keyof ProfileRow>(key: K, value: ProfileRow[K]) => setForm((f) => ({ ...f, [key]: value }));
+  const text = (key: keyof ProfileRow) => ({
+    value: (form[key] as string | undefined) ?? "",
+    onChange: (e: ChangeEvent<HTMLInputElement>) => set(key, e.target.value as never),
+    className: "field-raised",
+  });
+  const num = (key: "stats_languages" | "stats_tools" | "stats_experience") => ({
+    type: "number",
+    min: 0,
+    max: 99,
+    value: form[key] ?? 0,
+    onChange: (e: ChangeEvent<HTMLInputElement>) => set(key, Number(e.target.value)),
+    className: "field-raised",
+  });
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    const payload: Record<string, unknown> = {};
+    PROFILE_COLUMNS.forEach((c) => {
+      if (form[c] !== undefined) payload[c] = form[c];
+    });
+    payload.full_name = form.full_name || "Le Duc Trong";
+    payload.updated_at = new Date().toISOString();
+
+    const res = profile.id
+      ? await supabase.from("profiles").update(payload).eq("id", profile.id).select()
+      : await supabase.from("profiles").insert([payload]).select();
+    setSaving(false);
+    if (res.error || !res.data?.[0]) {
+      setError(res.error?.message ?? "Save failed.");
+      return;
+    }
+    onSaved(res.data[0]);
+  };
+
+  const upload = async (e: ChangeEvent<HTMLInputElement>, kind: "avatar" | "cv") => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const setBusy = kind === "avatar" ? setUploadingAvatar : setUploadingCv;
+    setBusy(true);
+    const url = await uploadToStorage("profile", file);
+    setBusy(false);
+    if (!url) {
+      setError("Upload failed. Check the storage permissions.");
+      return;
+    }
+    setForm((f) => (kind === "avatar" ? { ...f, avatar_url: url, avatar_scale: 1, avatar_x: 50, avatar_y: 50 } : { ...f, cv_url: url }));
+  };
+
+  // Drag the avatar inside its circle to reposition it.
+  const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!form.avatar_url) return;
+    drag.current = { x: e.clientX, y: e.clientY, px: Number(form.avatar_x ?? 50), py: Number(form.avatar_y ?? 50) };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const start = drag.current;
+    if (!start) return;
+    const scale = Number(form.avatar_scale) || 1;
+    const clamp = (v: number) => Math.max(0, Math.min(100, Math.round(v)));
+    setForm((f) => ({
+      ...f,
+      avatar_x: clamp(start.px - ((e.clientX - start.x) * 0.3) / scale),
+      avatar_y: clamp(start.py - ((e.clientY - start.y) * 0.3) / scale),
+    }));
+  };
+  const onPointerUp = () => {
+    drag.current = null;
+  };
+
+  return (
+    <AdminForm
+      title="Edit Profile"
+      icon={User}
+      error={error}
+      onClose={onCancel}
+      actions={<SaveCancel onCancel={onCancel} onSave={save} saving={saving} saveLabel="Save Profile" />}
+    >
+      <FormSection index="01" title="Identity (EN)" className="sm:grid-cols-2">
+        <Field label="Full name (EN)">
+          <input {...text("full_name")} placeholder="English name" />
+        </Field>
+        <Field label="Title (EN)">
+          <input {...text("title")} placeholder="Software Engineering Student" />
+        </Field>
+      </FormSection>
+
+      <FormSection index="02" title="Identity (VI)" className="sm:grid-cols-2">
+        <Field label="Full name (VI)">
+          <input {...text("full_name_vi")} placeholder="Tên tiếng Việt" />
+        </Field>
+        <Field label="Title (VI)">
+          <input {...text("title_vi")} placeholder="Sinh viên Kỹ thuật Phần mềm" />
+        </Field>
+      </FormSection>
+
+      <FormSection index="03" title="Biography">
+        <Field label="Bio (EN)" group>
+          <RichTextEditor value={form.bio || ""} onChange={(html) => set("bio", html)} />
+        </Field>
+        <Field label="Bio (VI)" group>
+          <RichTextEditor value={form.bio_vi || ""} onChange={(html) => set("bio_vi", html)} />
+        </Field>
+      </FormSection>
+
+      <FormSection index="04" title="Contact & social" className="sm:grid-cols-2">
+        <Field label="Email">
+          <input {...text("email")} type="email" placeholder="you@example.com" />
+        </Field>
+        <Field label="GitHub URL">
+          <input {...text("github_url")} placeholder="https://github.com/…" />
+        </Field>
+        <Field label="LinkedIn URL">
+          <input {...text("linkedin_url")} placeholder="https://linkedin.com/in/…" />
+        </Field>
+        <Field label="Facebook URL">
+          <input {...text("facebook_url")} placeholder="https://facebook.com/…" />
+        </Field>
+        <Field label="Instagram URL" className="sm:col-span-2">
+          <input {...text("instagram_url")} placeholder="https://instagram.com/…" />
+        </Field>
+      </FormSection>
+
+      <FormSection index="05" title="Location & availability" className="sm:grid-cols-2">
+        <Field label="Location (EN)">
+          <input {...text("location")} list="country-options" placeholder="Vietnam" />
+          <datalist id="country-options">
+            {["Vietnam", "Vietnam / Remote", "Remote / Worldwide", "Singapore", "Japan", "Australia"].map((c) => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
+        </Field>
+        <Field label="Location (VI)">
+          <input {...text("location_vi")} placeholder="Việt Nam" />
+        </Field>
+        <Field label="Work format (EN)">
+          <input {...text("work_format")} placeholder="Full-time / Freelancer" />
+        </Field>
+        <Field label="Work format (VI)">
+          <input {...text("work_format_vi")} placeholder="Toàn thời gian / Freelancer" />
+        </Field>
+        <Field label="Pronouns" group className="sm:col-span-2">
+          <div role="radiogroup" aria-label="Pronouns" className="flex flex-wrap gap-2">
+            {["he/him", "she/her", "they/them"].map((value) => {
+              const checked = (form.gender || "he/him") === value;
+              return (
+                <label
+                  key={value}
+                  className={cn(
+                    "btn-raised h-10 cursor-pointer select-none px-3 font-mono text-xs focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[hsl(var(--brand-accent))]",
+                    checked && "is-active font-semibold",
+                  )}
+                >
+                  <input type="radio" name="pronouns" value={value} checked={checked} onChange={() => set("gender", value)} className="sr-only" />
+                  <span className={cn("h-2 w-2 rounded-full", checked ? "bg-[hsl(var(--brand-accent))]" : "bg-muted-foreground/30")} />
+                  {value}
+                </label>
+              );
+            })}
+          </div>
+        </Field>
+      </FormSection>
+
+      <FormSection index="06" title="Numbers" className="grid-cols-3">
+        <Field label="Languages">
+          <input {...num("stats_languages")} />
+        </Field>
+        <Field label="Tools">
+          <input {...num("stats_tools")} />
+        </Field>
+        <Field label="Years exp.">
+          <input {...num("stats_experience")} />
+        </Field>
+      </FormSection>
+
+      <FormSection index="07" title="Avatar">
+        <UploadButton accept="image/*" onChange={(e) => upload(e, "avatar")} uploading={uploadingAvatar} className="justify-self-start">
+          Upload new avatar
+        </UploadButton>
+        {form.avatar_url && (
+          <div className="flex flex-col items-center gap-6 sm:flex-row">
+            <div
+              className="group relative h-32 w-32 shrink-0 cursor-grab touch-none overflow-hidden rounded-full border border-border bg-muted active:cursor-grabbing"
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerUp}
+            >
+              <Img src={form.avatar_url} draggable={false} alt="Avatar preview" className="pointer-events-none h-full w-full select-none object-cover" style={avatarStyle(form)} />
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 p-2 text-center font-mono text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">
+                Drag to position
+              </div>
+            </div>
+            <div className="flex w-full flex-col gap-4 font-mono text-xs">
+              {([
+                { label: "Zoom", key: "avatar_scale", min: 1, max: 4, step: 0.1, unit: "x", value: form.avatar_scale || 1 },
+                { label: "Position X", key: "avatar_x", min: 0, max: 100, step: 1, unit: "%", value: form.avatar_x ?? 50 },
+                { label: "Position Y", key: "avatar_y", min: 0, max: 100, step: 1, unit: "%", value: form.avatar_y ?? 50 },
+              ] as const).map((s) => (
+                <label key={s.key} className="flex flex-col gap-1.5">
+                  <span className="flex justify-between text-muted-foreground">
+                    <span>{s.label}</span>
+                    <span className="font-semibold text-foreground">
+                      {s.value}
+                      {s.unit}
+                    </span>
+                  </span>
+                  <input
+                    type="range"
+                    min={s.min}
+                    max={s.max}
+                    step={s.step}
+                    value={s.value}
+                    onChange={(e) => set(s.key, Number(e.target.value))}
+                    className="h-6 w-full accent-[hsl(var(--brand-accent))]"
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+      </FormSection>
+
+      <FormSection index="08" title="Curriculum vitae (PDF)">
+        <UploadButton accept=".pdf,application/pdf" onChange={(e) => upload(e, "cv")} uploading={uploadingCv} icon={FileText} className="justify-self-start">
+          Upload new CV
+        </UploadButton>
+        {form.cv_url && (
+          <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-background/40 p-3">
+            <span className="tile-raised h-9 w-9 shrink-0 text-muted-foreground">
+              <FolderOpen className="h-4 w-4" />
+            </span>
+            <span className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">
+              {form.cv_url.split("/").pop()?.split("?")[0] || "document.pdf"}
+            </span>
+            <a href={form.cv_url} target="_blank" rel="noreferrer" className="btn-raised h-9 shrink-0 px-3 font-mono text-[10px] font-semibold uppercase tracking-wider">
+              Preview
+            </a>
+          </div>
+        )}
+      </FormSection>
+    </AdminForm>
   );
 }

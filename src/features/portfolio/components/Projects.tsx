@@ -1,855 +1,860 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, type ChangeEvent } from "react";
+import {
+  ArrowUpRight, Briefcase, CalendarRange, ChevronLeft, ChevronRight, Code, ExternalLink, FolderOpen, Github, Image as ImageIcon, Star, UserRound, Users, X,
+} from "lucide-react";
 import { useAppContext } from "@/utils/providers";
 import { supabase } from "@/lib/supabase";
-import { Loader2, Edit2, Plus, Trash2, Eye, ExternalLink, Code, X, Briefcase, ChevronDown, ChevronUp, Users, Calendar, ChevronLeft, ChevronRight, Image as ImageIcon, FolderOpen } from "lucide-react";
+import { byStartDesc, formatRange, pick, toList, toPlainText, uploadToStorage } from "@/lib/format";
+import type { Project, ProjectImage } from "@/types/portfolio";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { RichTextEditor } from "@/components/ui/rich-text-editor";
-import DepthCarousel from "@/components/ui/depth-carousel";
+import { SectionFrame, AddButton, TechTag, EmptyWell, RichText, LogoBadge, HATCH_PATTERN } from "@/components/ui/blueprint";
+import { AdminForm, FormSection, Field, UploadButton, AdminActions, SaveCancel } from "@/components/ui/admin-form";
+import { Overlay } from "@/components/ui/overlay";
+import { Img } from "@/components/ui/img";
+import { cn } from "@/lib/utils";
 
-export function Projects({ initialProjects }: { initialProjects: any[] }) {
-  const { isAdmin, language } = useAppContext();
+type ProjectForm = Partial<Project> & { tech_stack_input?: string; features_input?: string; features_vi_input?: string };
+
+const toLines = (v?: string) => (v ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+
+/** Gallery images from the `images` JSONB column (or a legacy `image_url` string/JSON). */
+function getImages(p: Partial<Project> & { image_url?: unknown }): ProjectImage[] {
+  const normalise = (list: unknown[]) =>
+    list
+      .map((i) => (typeof i === "string" ? { url: i } : (i as ProjectImage)))
+      .filter((i): i is ProjectImage => !!i && typeof i.url === "string" && !!i.url);
+  if (Array.isArray(p.images)) return normalise(p.images);
+  const legacy = p.image_url;
+  if (typeof legacy === "string" && legacy) {
+    try {
+      const parsed = JSON.parse(legacy);
+      if (Array.isArray(parsed)) return normalise(parsed);
+    } catch {
+      /* plain URL */
+    }
+    return [{ url: legacy }];
+  }
+  return [];
+}
+
+const EMPTY_PROJECT: ProjectForm = {
+  title: "", title_vi: "",
+  role: "", role_vi: "",
+  description: "", description_vi: "",
+  logo_url: "",
+  images: [],
+  tech_stack_input: "",
+  features_input: "",
+  features_vi_input: "",
+  team_size: 1,
+  demo_url: "", github_url: "",
+  start_date: "", end_date: "",
+  is_hidden: false,
+  is_featured: false,
+};
+
+export function Projects({ initialProjects }: { initialProjects: Project[] }) {
+  const { isAdmin, language, t } = useAppContext();
   const [projects, setProjects] = useState(initialProjects);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<any>({});
-  const [loading, setLoading] = useState(false);
-  const [validationError, setValidationError] = useState<string | null>(null);
-  const [selectedProject, setSelectedProject] = useState<any>(null);
+  const [editing, setEditing] = useState<ProjectForm | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Project | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
 
-  const visibleProjects = isAdmin ? projects : projects.filter(p => !p.is_hidden);
-  const sortedProjects = [...visibleProjects].sort((a, b) => {
-    const timeA = a.start_date ? new Date(a.start_date).getTime() : new Date().getTime();
-    const timeB = b.start_date ? new Date(b.start_date).getTime() : new Date().getTime();
-    return timeB - timeA;
-  });
+  // Featured (starred) projects first, each group newest first.
+  const visible = (isAdmin ? projects : projects.filter((p) => !p.is_hidden)).slice().sort(byStartDesc);
+  const ordered = [...visible.filter((p) => p.is_featured), ...visible.filter((p) => !p.is_featured)];
+  const [lead, ...after] = ordered;
+  const side = after.slice(0, 2);
+  const rest = after.slice(2);
 
-  const handleEdit = (proj: any) => {
-    setValidationError(null);
-    const techStackStr = Array.isArray(proj.tech_stack)
-      ? proj.tech_stack.join(', ')
-      : (Array.isArray(proj.tags) ? proj.tags.join(', ') : (proj.tech_stack || proj.tags || ''));
-
-    setFormData({
-      ...proj,
-      tech_stack_input: techStackStr
+  const openEdit = (p: Project) => {
+    setError(null);
+    setEditing({
+      ...p,
+      images: getImages(p),
+      tech_stack_input: toList(p.tech_stack).join(", "),
+      features_input: toList(p.features).join("\n"),
+      features_vi_input: toList(p.features_vi).join("\n"),
     });
-    setEditingId(proj.id);
+  };
+  const openNew = () => {
+    setError(null);
+    setEditing({ ...EMPTY_PROJECT });
   };
 
-  const handleAddNew = () => {
-    setValidationError(null);
-    setFormData({
-      title: "", title_vi: "",
-      role: "", role_vi: "",
-      description: "", description_vi: "",
-      logo_url: "",
-      image_url: "",
-      tech_stack_input: "",
-      team_size: 1,
-      demo_url: "", github_url: "",
-      start_date: "", end_date: "",
-      is_hidden: false
-    });
-    setEditingId("new");
+  const save = async () => {
+    if (!editing) return;
+    if (!(editing.title || editing.title_vi || "").trim()) return setError("Project title is required.");
+
+    setSaving(true);
+    setError(null);
+    // `image_url` / `tags` are legacy keys with no column; never send them.
+    const { tech_stack_input, features_input, features_vi_input, id, ...rest } = editing as ProjectForm & { image_url?: unknown; tags?: unknown };
+    delete (rest as { image_url?: unknown }).image_url;
+    delete (rest as { tags?: unknown }).tags;
+    const payload = {
+      ...rest,
+      images: editing.images ?? [],
+      tech_stack: toList(tech_stack_input),
+      features: toLines(features_input),
+      features_vi: toLines(features_vi_input),
+      start_date: rest.start_date || null,
+      end_date: rest.end_date || null,
+    };
+    const res = id
+      ? await supabase.from("projects").update(payload).eq("id", id).select()
+      : await supabase.from("projects").insert([{ ...payload, display_order: projects.length }]).select();
+    setSaving(false);
+    if (res.error || !res.data?.[0]) return setError(res.error?.message ?? "Save failed.");
+    const row = res.data[0] as Project;
+    setProjects((list) => (id ? list.map((p) => (p.id === id ? row : p)) : [...list, row]));
+    setEditing(null);
   };
 
-  const handleSave = async () => {
-    setValidationError(null);
-    const titleText = (formData.title || formData.title_vi || "").trim();
-
-    if (!titleText) {
-      setValidationError("Project Title is required.");
-      return;
-    }
-
-    setLoading(true);
-    const techStackArr = formData.tech_stack_input
-      ? formData.tech_stack_input.split(',').map((s: string) => s.trim()).filter(Boolean)
-      : [];
-
-    const payload = { ...formData };
-    delete payload.tech_stack_input;
-    payload.tech_stack = techStackArr;
-    payload.tags = techStackArr;
-
-    if (!payload.start_date) payload.start_date = null;
-    if (!payload.end_date) payload.end_date = null;
-
-    if (editingId === "new") {
-      const { data, error } = await supabase.from("projects").insert([payload]).select();
-      if (error) {
-        alert("Save Error: " + error.message);
-      }
-      if (!error && data) {
-        setProjects([...projects, data[0]]);
-        setEditingId(null);
-      }
-    } else {
-      const { data, error } = await supabase.from("projects").update(payload).eq("id", editingId).select();
-      if (error) {
-        alert("Update Error: " + error.message);
-      }
-      if (!error && data) {
-        setProjects(projects.map(p => p.id === editingId ? data[0] : p));
-        setEditingId(null);
-      }
-    }
-    setLoading(false);
-  };
-
-  const handleToggleHide = async (proj: any) => {
-    const { data } = await supabase.from("projects").update({ is_hidden: !proj.is_hidden }).eq("id", proj.id).select();
-    if (data) { setProjects(projects.map(p => p.id === proj.id ? data[0] : p)); }
-  };
-
-  const handleDelete = (id: string) => {
-    setConfirmId(id);
+  const patch = async (p: Project, change: Partial<Project>) => {
+    const { data } = await supabase.from("projects").update(change).eq("id", p.id).select();
+    if (data?.[0]) setProjects((list) => list.map((x) => (x.id === p.id ? (data[0] as Project) : x)));
   };
 
   const doDelete = async () => {
     if (!confirmId) return;
-    await supabase.from("projects").delete().eq("id", confirmId);
-    setProjects(projects.filter(p => p.id !== confirmId));
+    const { error: err } = await supabase.from("projects").delete().eq("id", confirmId);
+    if (!err) setProjects((list) => list.filter((p) => p.id !== confirmId));
     setConfirmId(null);
   };
 
-  return (
-    <section id="projects" className="w-full max-w-4xl mx-auto py-12 flex flex-col font-sans px-4">
-      <ConfirmModal
-        isOpen={!!confirmId}
-        title="Delete Project"
-        message="Are you sure you want to remove this project? This action cannot be undone."
-        confirmText="Delete"
-        onConfirm={doDelete}
-        onCancel={() => setConfirmId(null)}
-      />
+  const tileProps = (p: Project) => ({
+    proj: p,
+    number: ordered.indexOf(p) + 1,
+    isAdmin,
+    onToggleFeatured: () => patch(p, { is_featured: !p.is_featured }),
+    onToggleHide: () => patch(p, { is_hidden: !p.is_hidden }),
+    onEdit: () => openEdit(p),
+    onDelete: () => setConfirmId(p.id),
+    onOpen: () => setSelected(p),
+  });
 
-      <div className="flex items-center justify-between mb-8 pb-4 border-b border-border/50">
-        <h2 className="text-2xl font-bold tracking-tight text-foreground">Projects</h2>
-        {isAdmin && (
-          <button onClick={handleAddNew} className="flex items-center gap-2 px-3 py-1.5 hover:bg-muted text-foreground border border-border rounded-md font-medium text-xs transition-colors">
-            <Plus className="w-3.5 h-3.5" /> Add Project
-          </button>
+  return (
+    <SectionFrame
+      id="projects"
+      index="03"
+      icon={FolderOpen}
+      kicker={t.nav.projects}
+      title={t.sections.projectsTitle}
+      subtitle={t.sections.experienceDesc}
+      count={ordered.length}
+      action={isAdmin && <AddButton onClick={openNew}>{language === "vi" ? "Thêm" : "Add"}</AddButton>}
+      overlays={
+        <>
+          <ConfirmModal
+            isOpen={!!confirmId}
+            title="Delete project"
+            message="Remove this project? This cannot be undone."
+            confirmText="Delete"
+            onConfirm={doDelete}
+            onCancel={() => setConfirmId(null)}
+          />
+          {selected && <ProjectDetail proj={selected} onClose={() => setSelected(null)} />}
+          {editing && (
+            <ProjectFormSheet form={editing} setForm={setEditing} onCancel={() => setEditing(null)} onSave={save} saving={saving} error={error} setError={setError} />
+          )}
+        </>
+      }
+    >
+      {!lead ? (
+        <EmptyWell>No projects logged.</EmptyWell>
+      ) : (
+        /*
+         * Magic-bento grid with tight gutters:
+         *   [ 1 (large)  ][ 2 (row card) ]
+         *   [            ][ 3 (row card) ]
+         *   [ 4 ][ 5 ][ 6 ] …
+         * Phones and tablets stack the top block.
+         */
+        <div className="flex flex-col gap-3 md:gap-4">
+          <div className={cn("grid grid-cols-1 gap-3 md:gap-4", side.length > 0 && "lg:grid-cols-2")}>
+            <ProjectTile variant={side.length > 0 ? "feature" : "wide"} {...tileProps(lead)} />
+            {side.length > 0 && (
+              <div className="grid grid-cols-1 gap-3 md:gap-4 lg:auto-rows-fr">
+                {side.map((p) => (
+                  <ProjectTile key={p.id} variant="row" {...tileProps(p)} />
+                ))}
+              </div>
+            )}
+          </div>
+          {rest.length > 0 && (
+            // Pick the column count that closes the rows: 3 when it divides evenly (or nothing better fits), else 2.
+            <div
+              className={cn(
+                "grid grid-cols-1 gap-3 md:gap-4",
+                rest.length > 1 && "sm:grid-cols-2",
+                rest.length > 2 && (rest.length % 3 === 0 || rest.length % 2 !== 0) && "lg:grid-cols-3",
+              )}
+            >
+              {rest.map((p) => (
+                <ProjectTile key={p.id} variant="compact" {...tileProps(p)} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </SectionFrame>
+  );
+}
+
+/**
+ * Info-only tiles (no cover images):
+ * - feature : the lead project beside projects 2–3; facts, key features, tags, links
+ * - wide    : the lead project when it is alone; summary on the left, features on the right on laptops
+ * - row     : projects 2–3; two key features, tags and a meta line
+ * - compact : projects 4+, the same in a smaller block
+ */
+type TileVariant = "feature" | "wide" | "row" | "compact";
+
+/** "Title: long explanation" -> "Title" (the short label shown on cards). */
+const featureLabel = (f: string) => {
+  const i = f.indexOf(":");
+  return (i > 0 && i < 80 ? f.slice(0, i) : f).trim();
+};
+
+/** Project features in the active language (Vietnamese when filled in). */
+function getFeatures(p: Partial<Project>, language: "en" | "vi"): string[] {
+  const vi = toList(p.features_vi);
+  return language === "vi" && vi.length ? vi : toList(p.features);
+}
+
+function ProjectTile({
+  proj,
+  number,
+  variant,
+  isAdmin,
+  className,
+  onToggleFeatured,
+  onToggleHide,
+  onEdit,
+  onDelete,
+  onOpen,
+}: {
+  proj: Project;
+  number: number;
+  variant: TileVariant;
+  isAdmin: boolean;
+  className?: string;
+  onToggleFeatured: () => void;
+  onToggleHide: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onOpen: () => void;
+}) {
+  const { language } = useAppContext();
+  const wide = variant === "wide";
+  const row = variant === "row";
+  const large = variant === "feature" || wide;
+  const vi = language === "vi";
+
+  const title = pick(language, proj.title, proj.title_vi);
+  const role = pick(language, proj.role, proj.role_vi);
+  const excerpt = toPlainText(pick(language, proj.description, proj.description_vi));
+  const tags = toList(proj.tech_stack);
+  const shownTags = tags.slice(0, large ? 8 : 4);
+  const moreTags = tags.length - shownTags.length;
+  const features = getFeatures(proj, language).map(featureLabel).filter(Boolean);
+  const shownFeatures = features.slice(0, large ? 4 : 2);
+  const moreFeatures = features.length - shownFeatures.length;
+  const hasDates = !!(proj.start_date || proj.end_date);
+  const dateRange = hasDates ? formatRange(proj.start_date, proj.end_date, language) : "";
+  const team = proj.team_size ? `${proj.team_size} ${vi ? "thành viên" : proj.team_size === 1 ? "member" : "members"}` : "";
+
+  const links =
+    proj.demo_url || proj.github_url ? (
+      <div className="relative z-10 flex flex-wrap items-center gap-2.5">
+        {proj.demo_url && (
+          <a href={proj.demo_url} target="_blank" rel="noreferrer" className="btn-raised h-10 px-3.5 font-mono text-xs font-semibold">
+            <ExternalLink className="h-3.5 w-3.5" /> Live
+          </a>
+        )}
+        {proj.github_url && (
+          <a href={proj.github_url} target="_blank" rel="noreferrer" className="btn-raised h-10 px-3.5 font-mono text-xs font-semibold">
+            <Github className="h-3.5 w-3.5" /> GitHub
+          </a>
         )}
       </div>
+    ) : null;
 
-      {editingId && (
-        <div className="bg-card p-6 rounded-xl border border-border shadow-xl mb-12">
-          <ProjectForm
-            formData={formData}
-            setFormData={setFormData}
-            handleSave={handleSave}
-            handleCancel={() => setEditingId(null)}
-            loading={loading}
-            validationError={validationError}
-          />
-        </div>
-      )}
-
-      {visibleProjects.length === 0 && !editingId && (
-        <div className="text-center py-10 text-muted-foreground opacity-70 font-mono text-sm"> No projects logged. </div>
-      )}
-
-      {sortedProjects.length > 0 && !editingId && (
-        <div className="flex flex-col w-full">
-          {sortedProjects.map((proj) => (
-            <ProjectCard
-              key={proj.id}
-              proj={proj}
-              isAdmin={isAdmin}
-              language={language}
-              handleToggleHide={handleToggleHide}
-              handleEdit={handleEdit}
-              handleDelete={handleDelete}
-              onOpen={() => setSelectedProject(proj)}
-            />
-          ))}
-        </div>
-      )}
-
-      {selectedProject && (
-        <ProjectModal proj={selectedProject} language={language} onClose={() => setSelectedProject(null)} />
-      )}
-    </section>
-  );
-}
-
-// MAIN PAGE PROJECT CARD: Timeline List layout matching Experience & Education (NO images on main page)
-function ProjectCard({ proj, isAdmin, language, handleToggleHide, handleEdit, handleDelete, onOpen }: any) {
-  const [isExpanded, setIsExpanded] = useState(false);
-
-  const title = language === 'vi' && proj.title_vi ? proj.title_vi : proj.title;
-  const role = language === 'vi' && proj.role_vi ? proj.role_vi : proj.role;
-  const rawDescription = language === 'vi' && proj.description_vi ? proj.description_vi : proj.description;
-
-  const hasHtmlContent = (str?: string) => {
-    if (!str) return false;
-    const stripped = str.replace(/<[^>]*>/g, '').trim();
-    return stripped.length > 0;
-  };
-
-  const showDescription = hasHtmlContent(rawDescription);
-
-  const techStack = Array.isArray(proj.tech_stack)
-    ? proj.tech_stack
-    : (Array.isArray(proj.tags) ? proj.tags : (typeof proj.tech_stack === 'string' && proj.tech_stack ? proj.tech_stack.split(',').map((s: string) => s.trim()).filter(Boolean) : []));
-
-  const isHidden = proj.is_hidden;
-
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return 'Present';
-    if (dateString.includes('-')) {
-      return new Date(dateString).toLocaleDateString('en-GB', { month: '2-digit', year: 'numeric' }).replace(/\//g, '.');
-    }
-    return dateString;
-  };
-
-  return (
-    <div className={`group relative flex flex-col border-b border-border/50 py-8 first:pt-0 last:border-0 ${isHidden ? 'opacity-50 grayscale' : ''}`}>
-      <div className="flex gap-4">
-        {/* Timeline Icon & Vertical Line */}
-        <div className="flex flex-col items-center mt-1">
-          {proj.logo_url ? (
-            <div className="w-9 h-9 rounded-full border border-border bg-white flex items-center justify-center overflow-hidden shrink-0 shadow-sm z-10">
-              <img src={proj.logo_url} className="w-full h-full object-cover" alt="Logo" />
-            </div>
-          ) : (
-            <div className="w-9 h-9 rounded-full border border-border bg-card flex items-center justify-center shrink-0 shadow-sm z-10">
-              <FolderOpen className="w-4.5 h-4.5 text-muted-foreground" />
-            </div>
-          )}
-          <div className="w-px h-full bg-border/50 mt-2" />
-        </div>
-
-        {/* Content Column */}
-        <div className="flex-1 pb-4">
-          {/* Header Row */}
-          <div className="flex items-center justify-between mb-1">
-            <h3
-              onClick={onOpen}
-              className="font-bold text-xl text-foreground tracking-tight hover:underline cursor-pointer"
-            >
-              {title}
-            </h3>
-            <div className="flex items-center gap-2">
-              {isAdmin && (
-                <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => handleToggleHide(proj)} className="p-1 hover:text-foreground text-muted-foreground" title="Toggle visibility"><Eye className="w-4 h-4" /></button>
-                  <button onClick={() => handleEdit(proj)} className="p-1 hover:text-foreground text-muted-foreground" title="Edit"><Edit2 className="w-4 h-4" /></button>
-                  <button onClick={() => handleDelete(proj.id)} className="p-1 hover:text-red-500 text-muted-foreground" title="Delete"><Trash2 className="w-4 h-4" /></button>
-                </div>
-              )}
-
-              {/* Chevron Toggle Button - ONLY rendered if description exists */}
-              {showDescription && (
-                <button
-                  onClick={() => setIsExpanded(!isExpanded)}
-                  className="p-1 text-muted-foreground hover:text-foreground transition-colors"
-                  title={isExpanded ? "Collapse" : "Expand"}
-                >
-                  {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Meta Row (Role, Dates, Team Size - ONLY if non-empty) */}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground mb-3 font-mono">
-            {role && <span>{role}</span>}
-            {role && (proj.start_date || proj.end_date) && <span className="opacity-50">|</span>}
-            {(proj.start_date || proj.end_date) && (
-              <span>{formatDate(proj.start_date)} — {formatDate(proj.end_date)}</span>
-            )}
-            {proj.team_size && (role || proj.start_date || proj.end_date) && <span className="opacity-50">|</span>}
-            {proj.team_size && (
-              <span className="flex items-center gap-1">
-                <Users className="w-3.5 h-3.5" /> {proj.team_size} {proj.team_size === 1 ? 'member' : 'members'}
-              </span>
-            )}
-          </div>
-
-          {/* Description Content (Max 5 lines unless expanded) */}
-          {showDescription && (
-            <div
-              className={`text-sm text-muted-foreground/90 leading-relaxed mb-3 transition-all [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1.5 ${isExpanded ? 'line-clamp-none' : 'line-clamp-5'
-                }`}
-              dangerouslySetInnerHTML={{ __html: rawDescription }}
-            />
-          )}
-
-          {/* Tech Stack Badges */}
-          {techStack && techStack.length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-3 mb-4">
-              {techStack.map((tech: string, i: number) => (
-                <span key={i} className="px-3 py-1 text-xs font-mono font-medium rounded-full bg-muted/60 border border-border/60 text-muted-foreground">
-                  {tech}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {/* Action Links & View Details */}
-          <div className="flex items-center gap-4 text-xs font-medium pt-2">
-            <button onClick={onOpen} className="text-foreground hover:underline mr-auto">
-              View details →
-            </button>
-            {proj.demo_url && (
-              <a href={proj.demo_url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors font-mono">
-                <ExternalLink className="w-3.5 h-3.5" /> Live
-              </a>
-            )}
-            {proj.github_url && (
-              <a href={proj.github_url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors font-mono">
-                <Code className="w-3.5 h-3.5" /> GitHub
-              </a>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ProjectForm({ formData, setFormData, handleSave, handleCancel, loading, validationError }: any) {
-  const [uploadingLogo, setUploadingLogo] = useState(false);
-  const [uploadingImage, setUploadingImage] = useState(false);
-
-  const images = useMemo(() => {
-    if (!formData.image_url) return [];
-    try {
-      const parsed = JSON.parse(formData.image_url);
-      if (Array.isArray(parsed)) return parsed;
-    } catch (e) { }
-    return [{ url: formData.image_url }];
-  }, [formData.image_url]);
-
-  const updateImages = (newImages: any[]) => {
-    setFormData({ ...formData, image_url: JSON.stringify(newImages) });
-  };
-
-  const uploadLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploadingLogo(true);
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${Math.random()}.${fileExt}`;
-    const filePath = `project-logos/${fileName}`;
-    const { error } = await supabase.storage.from('portfolio-images').upload(filePath, file);
-    if (!error) {
-      const { data } = supabase.storage.from('portfolio-images').getPublicUrl(filePath);
-      setFormData({ ...formData, logo_url: data.publicUrl });
-    }
-    setUploadingLogo(false);
-  };
-
-  const uploadImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploadingImage(true);
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${Math.random()}.${fileExt}`;
-    const filePath = `projects/${fileName}`;
-    const { error } = await supabase.storage.from('portfolio-images').upload(filePath, file);
-    if (!error) {
-      const { data } = supabase.storage.from('portfolio-images').getPublicUrl(filePath);
-      const newImages = [...images, { url: data.publicUrl }];
-      updateImages(newImages);
-    }
-    setUploadingImage(false);
-  };
-
-  const removeImg = (index: number) => {
-    const newImages = images.filter((_, i) => i !== index);
-    updateImages(newImages);
-  };
-
-  return (
-    <div className="space-y-5 font-sans">
-      <div className="flex items-center justify-between border-b border-border pb-3">
-        <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
-          {formData.id ? "Edit Project" : "Add Project"}
+  const kickerRow = (
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <LogoBadge src={proj.logo_url} alt={`${title} logo`} icon={FolderOpen} size={large ? "md" : "sm"} />
+        <span className="kicker line-clamp-2 min-w-0">
+          {proj.is_featured && <Star className="mr-1 inline h-3 w-3 -translate-y-px fill-current" />}
+          {[String(number).padStart(2, "0"), role].filter(Boolean).join(" · ")}
         </span>
       </div>
-
-      {validationError && (
-        <div className="p-3 rounded-md bg-red-500/10 border border-red-500/30 text-red-500 text-xs font-medium">
-          {validationError}
-        </div>
-      )}
-
-      {/* Section 1: English Basic Info */}
-      <div className="space-y-3">
-        <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Basic Information (EN)</span>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Project Title (EN) *</label>
-            <input
-              value={formData.title || ""}
-              onChange={e => setFormData({ ...formData, title: e.target.value })}
-              className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none"
-              placeholder="e.g. Portfolio Website"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Role / Position (EN)</label>
-            <input
-              value={formData.role || ""}
-              onChange={e => setFormData({ ...formData, role: e.target.value })}
-              className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none"
-              placeholder="e.g. Full-Stack Developer"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Section 2: Vietnamese Information */}
-      <div className="border-t border-border pt-4 space-y-3">
-        <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Vietnamese Information (VI)</span>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Project Title (VI)</label>
-            <input
-              value={formData.title_vi || ""}
-              onChange={e => setFormData({ ...formData, title_vi: e.target.value })}
-              className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none"
-              placeholder="e.g. Trang web Portfolio"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Role / Position (VI)</label>
-            <input
-              value={formData.role_vi || ""}
-              onChange={e => setFormData({ ...formData, role_vi: e.target.value })}
-              className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none"
-              placeholder="e.g. Lập trình viên Full-Stack"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Section 3: Description & Content */}
-      <div className="border-t border-border pt-4 space-y-3">
-        <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Description & Content</span>
-        <div className="grid grid-cols-1 gap-4">
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Description (EN)</label>
-            <RichTextEditor
-              value={formData.description || ""}
-              onChange={html => setFormData({ ...formData, description: html })}
-            />
-          </div>
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Description (VI)</label>
-            <RichTextEditor
-              value={formData.description_vi || ""}
-              onChange={html => setFormData({ ...formData, description_vi: html })}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Section 4: Project Links, Dates & Team Size */}
-      <div className="border-t border-border pt-4 space-y-3">
-        <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Project Links, Dates & Team Size</span>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Live Demo URL</label>
-            <input
-              value={formData.demo_url || ""}
-              onChange={e => setFormData({ ...formData, demo_url: e.target.value })}
-              className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none"
-              placeholder="https://example.com"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">GitHub Code URL</label>
-            <input
-              value={formData.github_url || ""}
-              onChange={e => setFormData({ ...formData, github_url: e.target.value })}
-              className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none"
-              placeholder="https://github.com/username/repo"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Team Size (Members)</label>
-            <input
-              type="number"
-              min="1"
-              max="500"
-              value={formData.team_size ?? 1}
-              onChange={e => setFormData({ ...formData, team_size: e.target.value ? Number(e.target.value) : null })}
-              className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none"
-              placeholder="e.g. 5"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Start Date</label>
-            <input
-              type="date"
-              value={formData.start_date || ""}
-              onChange={e => setFormData({ ...formData, start_date: e.target.value })}
-              className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">End Date</label>
-            <input
-              type="date"
-              value={formData.end_date || ""}
-              onChange={e => setFormData({ ...formData, end_date: e.target.value })}
-              className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Section 5: Technologies & Tech Stack */}
-      <div className="border-t border-border pt-4 space-y-3">
-        <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Technologies & Tech Stack</span>
-        <div>
-          <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Tech Stack (Comma-separated)</label>
-          <input
-            value={formData.tech_stack_input || ""}
-            onChange={e => setFormData({ ...formData, tech_stack_input: e.target.value })}
-            className="w-full px-3.5 py-2 rounded-md border border-input bg-background hover:bg-muted focus:ring-1 focus:ring-foreground text-sm outline-none"
-            placeholder="e.g. React, Next.js, Tailwind CSS, Supabase"
+      <div className="flex shrink-0 items-center gap-2">
+        {isAdmin && (
+          <AdminActions
+            className="relative z-10"
+            isFeatured={proj.is_featured}
+            onToggleFeatured={onToggleFeatured}
+            isHidden={proj.is_hidden}
+            onToggleHide={onToggleHide}
+            onEdit={onEdit}
+            onDelete={onDelete}
           />
-        </div>
-      </div>
-
-      {/* Section 6: Project Logo & Media Gallery */}
-      <div className="border-t border-border pt-4 space-y-4">
-        <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">Project Logo & Media Gallery</span>
-
-        {/* Main Logo Upload */}
-        <div className="flex items-center gap-4 p-4 bg-background/50 rounded-xl border border-border">
-          <div className="w-12 h-12 bg-muted rounded-full border border-border flex items-center justify-center shrink-0 overflow-hidden">
-            {formData.logo_url ? <img src={formData.logo_url} className="w-full h-full object-cover" alt="Logo preview" /> : <Briefcase className="w-5 h-5 text-muted-foreground" />}
-          </div>
-          <div className="flex-1">
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Main Project Logo</label>
-            <label className={`cursor-pointer inline-flex border border-border bg-background text-foreground px-3 py-1.5 rounded-md text-xs font-medium items-center hover:bg-muted transition-colors ${uploadingLogo ? 'opacity-50' : ''}`}>
-              <input type="file" accept="image/*" onChange={uploadLogo} disabled={uploadingLogo} className="hidden" />
-              {uploadingLogo ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> : <Plus className="w-3.5 h-3.5 mr-2" />} Upload Logo
-            </label>
-          </div>
-        </div>
-
-        {/* Gallery Images Upload */}
-        <div className="p-4 bg-background/50 rounded-xl border border-border space-y-3">
-          <div className="flex items-center justify-between">
-            <label className="text-[10px] font-semibold text-muted-foreground block">Gallery Images</label>
-            <label className={`cursor-pointer inline-flex border border-border bg-background text-foreground px-3 py-1.5 rounded-md text-xs font-medium items-center hover:bg-muted transition-colors ${uploadingImage ? 'opacity-50' : ''}`}>
-              <input type="file" accept="image/*" onChange={uploadImage} disabled={uploadingImage} className="hidden" />
-              {uploadingImage ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> : <Plus className="w-3.5 h-3.5 mr-2" />} Add Image
-            </label>
-          </div>
-
-          {images.length > 0 && (
-            <div className="flex gap-2 flex-wrap pt-2">
-              {images.map((img: any, i: number) => (
-                <div key={i} className="relative w-16 h-16 border border-border rounded-lg overflow-hidden bg-background group">
-                  <img src={img.url} className="w-full h-full object-cover" alt="Gallery item" />
-                  <button type="button" onClick={() => removeImg(i)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"><X className="w-3 h-3" /></button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Action Buttons */}
-      <div className="flex justify-end gap-3 pt-5 border-t border-border">
-        <button type="button" onClick={handleCancel} className="px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-muted transition-colors">
-          Cancel
-        </button>
-        <button type="button" onClick={handleSave} disabled={loading} className="px-6 py-2 bg-foreground text-background text-sm font-medium rounded-md flex items-center hover:opacity-90 transition-opacity">
-          {loading ? "Saving..." : "Save Project"}
-        </button>
+        )}
+        <span aria-hidden className="tile-raised h-9 w-9 text-muted-foreground transition-colors group-hover/admin:text-foreground">
+          <ArrowUpRight className="h-4 w-4" />
+        </span>
       </div>
     </div>
   );
-}
 
-function ProjectModal({ proj, onClose, language }: any) {
-  const [showGallery, setShowGallery] = useState(false);
-  const [lightboxImgIndex, setLightboxImgIndex] = useState<number | null>(null);
+  const heading = (
+    <div className="flex min-w-0 flex-col gap-2">
+      <h3 className={cn("min-w-0 font-display font-bold tracking-tight text-foreground", large ? "text-2xl md:text-3xl" : "text-lg md:text-xl")}>
+        {/* Stretched button: the whole tile opens the details sheet */}
+        <button
+          type="button"
+          onClick={onOpen}
+          className="text-left after:absolute after:inset-0 after:z-0 after:rounded-[inherit] focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-offset-4 focus-visible:after:outline-[hsl(var(--brand-accent))]"
+        >
+          {title}
+        </button>
+      </h3>
+      {excerpt && <p className={cn("text-sm leading-relaxed text-muted-foreground", large ? "line-clamp-3" : "line-clamp-2")}>{excerpt}</p>}
+    </div>
+  );
 
-  const images = useMemo(() => {
-    if (!proj.image_url) return [];
-    try {
-      const parsed = JSON.parse(proj.image_url);
-      if (Array.isArray(parsed)) return parsed;
-    } catch (e) { }
-    return typeof proj.image_url === 'string' && proj.image_url ? [{ url: proj.image_url }] : [];
-  }, [proj.image_url]);
+  // Large tiles: role, team and period in a recessed fact strip.
+  const facts = [
+    role && { icon: UserRound, label: vi ? "Vai trò" : "Role", value: role },
+    team && { icon: Users, label: vi ? "Nhóm" : "Team", value: team },
+    hasDates && { icon: CalendarRange, label: vi ? "Thời gian" : "Period", value: dateRange },
+  ].filter(Boolean) as { icon: typeof Users; label: string; value: string }[];
 
-  const hasImages = images.length > 0;
+  const factGrid = facts.length > 0 && (
+    // Ruled grid: two columns on phones (an odd last fact spans both), one row from `sm`.
+    <dl
+      className={cn(
+        "well-recessed grid gap-px overflow-hidden bg-border/40 font-mono text-xs",
+        facts.length === 1 ? "grid-cols-1" : "grid-cols-2",
+        facts.length === 3 && "sm:grid-cols-3",
+      )}
+    >
+      {facts.map((f, i) => (
+        <div
+          key={f.label}
+          className={cn(
+            "flex min-w-0 flex-col gap-1 bg-[hsl(var(--background)/0.55)] px-4 py-3",
+            facts.length === 3 && i === 2 && "col-span-2 sm:col-span-1",
+          )}
+        >
+          <dt className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground/80">
+            <f.icon className="h-3 w-3" /> {f.label}
+          </dt>
+          <dd className="truncate text-foreground/90">{f.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 
-  const depthItems = useMemo(() => {
-    if (!hasImages) return [];
-    return images.map((img: any, idx: number) => ({
-      image: typeof img === 'string' ? img : img.url,
-      alt: `${proj.title || 'Project'} image ${idx + 1}`
-    }));
-  }, [images, proj.title, hasImages]);
+  // Small tiles: team and period on one line.
+  const metaLine = (team || hasDates) && (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 font-mono text-[11px] text-muted-foreground">
+      {team && (
+        <span className="inline-flex items-center gap-1.5">
+          <Users className="h-3 w-3" /> {team}
+        </span>
+      )}
+      {hasDates && (
+        <span className="inline-flex items-center gap-1.5">
+          <CalendarRange className="h-3 w-3" /> {dateRange}
+        </span>
+      )}
+    </div>
+  );
 
-  const title = language === 'vi' && proj.title_vi ? proj.title_vi : proj.title;
-  const desc = language === 'vi' && proj.description_vi ? proj.description_vi : proj.description;
-  const role = language === 'vi' && proj.role_vi ? proj.role_vi : proj.role;
-  const techStack = Array.isArray(proj.tech_stack)
-    ? proj.tech_stack
-    : (Array.isArray(proj.tags) ? proj.tags : (typeof proj.tech_stack === 'string' && proj.tech_stack ? proj.tech_stack.split(',').map((s: string) => s.trim()).filter(Boolean) : []));
+  const featureList = shownFeatures.length > 0 && (
+    <div className="flex min-w-0 flex-col gap-2.5">
+      {large && <span className="kicker">{vi ? "Tính năng chính" : "Key features"}</span>}
+      <ul className="flex min-w-0 flex-col gap-2">
+        {shownFeatures.map((f) => (
+          <li key={f} className="flex min-w-0 items-start gap-2.5 text-sm text-foreground/85">
+            <span aria-hidden className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-[2px] bg-[hsl(var(--brand-accent))]" />
+            <span className={cn("min-w-0", large ? "line-clamp-2" : "truncate")}>{f}</span>
+          </li>
+        ))}
+        {moreFeatures > 0 && (
+          <li className="pl-4 font-mono text-[11px] text-muted-foreground">
+            +{moreFeatures} {vi ? "tính năng khác" : "more"}
+          </li>
+        )}
+      </ul>
+    </div>
+  );
 
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return 'Present';
-    if (dateString.includes('-')) {
-      return new Date(dateString).toLocaleDateString('en-GB', { month: '2-digit', year: 'numeric' }).replace(/\//g, '.');
-    }
-    return dateString;
-  };
+  const tagList = shownTags.length > 0 && (
+    <div className="flex flex-wrap gap-2 pb-1">
+      {shownTags.map((tag) => (
+        <TechTag key={tag}>{tag}</TechTag>
+      ))}
+      {moreTags > 0 && <TechTag>+{moreTags}</TechTag>}
+    </div>
+  );
 
-  // Keyboard navigation & close
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (lightboxImgIndex !== null) {
-          setLightboxImgIndex(null);
-        } else {
-          onClose();
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [lightboxImgIndex, onClose]);
+  const tileClass = cn("panel-raised group/admin flex min-w-0 flex-col gap-4 p-4 md:p-5", proj.is_hidden && "opacity-50 grayscale", className);
+
+  if (wide) {
+    return (
+      <article className={cn(tileClass, "md:p-6")}>
+        {kickerRow}
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 lg:gap-8">
+          <div className="flex min-w-0 flex-col gap-4">
+            {heading}
+            {factGrid}
+            {links && <div className="mt-auto">{links}</div>}
+          </div>
+          <div className="flex min-w-0 flex-col gap-4">
+            {featureList}
+            {tagList}
+          </div>
+        </div>
+      </article>
+    );
+  }
+
+  if (large) {
+    return (
+      <article className={tileClass}>
+        {kickerRow}
+        {heading}
+        {factGrid}
+        {featureList}
+        {tagList}
+        {links && <div className="mt-auto">{links}</div>}
+      </article>
+    );
+  }
 
   return (
-    <div
-      className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 md:p-6 animate-in fade-in duration-300 font-sans"
-      onClick={onClose}
-    >
-      {/* Medium-sized Animated Modal Box */}
+    <article className={tileClass}>
+      {kickerRow}
+      {heading}
+      {featureList}
+      <div className={cn("mt-auto flex flex-col gap-3", row && "sm:flex-row sm:flex-wrap sm:items-end sm:justify-between")}>
+        {tagList}
+        {metaLine}
+      </div>
+    </article>
+  );
+}
+
+/* ───────────────────────── details sheet ───────────────────────── */
+
+/*
+ * Header bar (logo, title, links, close) over the body:
+ * - laptop: gallery on the left (60%, fills the height), content scrolls on the right
+ * - phone / tablet: one scrolling column, gallery first, links pinned in a footer
+ * The image sits on a blurred copy of itself, so portrait phone screenshots and wide
+ * desktop shots both fill the frame without being cropped.
+ */
+function ProjectDetail({ proj, onClose }: { proj: Project; onClose: () => void }) {
+  const { language } = useAppContext();
+  const images = getImages(proj);
+  const [active, setActive] = useState(0);
+  const [zoom, setZoom] = useState(false);
+  const vi = language === "vi";
+
+  const title = pick(language, proj.title, proj.title_vi);
+  const role = pick(language, proj.role, proj.role_vi);
+  const desc = pick(language, proj.description, proj.description_vi);
+  const tags = toList(proj.tech_stack);
+  const features = getFeatures(proj, language);
+  const hasImages = images.length > 0;
+  const current = images[active];
+  const step = (d: number) => setActive((i) => (i + d + images.length) % images.length);
+
+  const facts = [
+    role && { icon: UserRound, label: vi ? "Vai trò" : "Role", value: role },
+    (proj.start_date || proj.end_date) && { icon: CalendarRange, label: vi ? "Thời gian" : "Period", value: formatRange(proj.start_date, proj.end_date, language) },
+    proj.team_size && { icon: Users, label: vi ? "Nhóm" : "Team", value: `${proj.team_size} ${vi ? "thành viên" : proj.team_size === 1 ? "member" : "members"}` },
+  ].filter(Boolean) as { icon: typeof Users; label: string; value: string }[];
+
+  const links = (size: string) =>
+    proj.demo_url || proj.github_url ? (
+      <>
+        {proj.demo_url && (
+          <a href={proj.demo_url} target="_blank" rel="noreferrer" className={cn("btn-raised btn-accent px-4 font-mono text-xs font-semibold", size)}>
+            <ExternalLink className="h-3.5 w-3.5" /> Live demo
+          </a>
+        )}
+        {proj.github_url && (
+          <a href={proj.github_url} target="_blank" rel="noreferrer" className={cn("btn-raised px-4 font-mono text-xs font-semibold text-foreground", size)}>
+            <Code className="h-3.5 w-3.5" /> Source
+          </a>
+        )}
+      </>
+    ) : null;
+
+  return (
+    <Overlay placement="sheet" onClose={zoom ? () => setZoom(false) : onClose} labelledBy="project-title" zIndex={120}>
       <div
-        className={`bg-card w-full ${showGallery && hasImages ? 'max-w-4xl' : 'max-w-2xl'} max-h-[85vh] rounded-2xl border border-border shadow-2xl flex flex-col md:flex-row relative overflow-hidden transition-all duration-300 animate-in zoom-in-95 fade-in-0`}
-        onClick={e => e.stopPropagation()}
+        className={cn(
+          "sheet-panel animate-sheet-in relative flex max-h-[94dvh] w-full flex-col overflow-hidden rounded-t-3xl font-sans sm:max-h-[90dvh] sm:rounded-2xl",
+          hasImages ? "sm:max-w-6xl lg:h-[min(90dvh,840px)]" : "sm:max-w-2xl",
+        )}
       >
-        {/* Close Button */}
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 z-40 p-2 bg-background/90 backdrop-blur-md rounded-full hover:bg-muted text-foreground border border-border/80 shadow-md transition-all hover:scale-105"
-          title="Close details"
-        >
-          <X className="w-4 h-4" />
-        </button>
+        {/* Header */}
+        <header className="flex shrink-0 items-center gap-3 border-b border-border/60 px-4 py-3 sm:gap-4 sm:px-6 sm:py-4">
+          <LogoBadge src={proj.logo_url} alt={`${title} logo`} icon={FolderOpen} />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="kicker truncate">{[vi ? "Dự án" : "Project", role].filter(Boolean).join(" · ")}</span>
+            <h2 id="project-title" className="line-clamp-2 font-display text-lg font-bold leading-tight tracking-tight text-foreground sm:text-2xl">
+              {title}
+            </h2>
+          </div>
+          <div className="hidden shrink-0 items-center gap-2.5 sm:flex">{links("h-10")}</div>
+          <button type="button" onClick={onClose} className="btn-raised h-10 w-10 shrink-0 rounded-full" aria-label="Close details">
+            <X className="h-4 w-4" />
+          </button>
+        </header>
 
-        {/* LEFT/MAIN CONTAINER: Header + Body */}
-        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-
-          {/* POPUP HEADER: Logo, Title & Gallery Button (Bottom-Right) */}
-          <div className="relative w-full p-6 bg-card border-b border-border/60 shrink-0">
-            <div className="flex items-center gap-4 pr-10">
-              {proj.logo_url ? (
-                <div className="w-12 h-12 rounded-full border border-border bg-white shrink-0 shadow-md flex items-center justify-center overflow-hidden">
-                  <img src={proj.logo_url} className="w-full h-full object-cover" alt="Logo" />
-                </div>
-              ) : (
-                <div className="w-12 h-12 rounded-full border border-border bg-card p-2 shrink-0 shadow-md flex items-center justify-center">
-                  <FolderOpen className="w-6 h-6 text-muted-foreground" />
+        {/* Body */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain lg:flex-row lg:overflow-hidden">
+          {hasImages && current && (
+            <div className="flex shrink-0 flex-col gap-3 border-b border-border/60 bg-[hsl(var(--background)/0.4)] p-3 sm:p-4 lg:w-[60%] lg:shrink lg:border-r lg:border-b-0 lg:p-5">
+              <div className="well-recessed relative aspect-[4/3] overflow-hidden sm:aspect-[16/10] lg:aspect-auto lg:min-h-0 lg:flex-1">
+                <Img src={current.url} alt="" aria-hidden className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover opacity-35 blur-2xl" />
+                <button type="button" onClick={() => setZoom(true)} className="absolute inset-0 block cursor-zoom-in p-2 sm:p-3" aria-label="Open full-size image">
+                  <Img
+                    src={current.url}
+                    alt={`${title} screenshot ${active + 1}`}
+                    className="h-full w-full rounded-[10px] object-contain drop-shadow-[0_12px_24px_rgb(0_0_0/0.35)]"
+                  />
+                </button>
+                {images.length > 1 && (
+                  <>
+                    <button type="button" onClick={() => step(-1)} className="btn-raised absolute top-1/2 left-3 h-10 w-10 -translate-y-1/2 rounded-full" aria-label="Previous image">
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <button type="button" onClick={() => step(1)} className="btn-raised absolute top-1/2 right-3 h-10 w-10 -translate-y-1/2 rounded-full" aria-label="Next image">
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                    <span className="chip-raised pointer-events-none absolute bottom-3 left-3 px-2.5 py-1 font-mono text-[11px] tabular-nums text-foreground/90">
+                      {active + 1} / {images.length}
+                    </span>
+                  </>
+                )}
+              </div>
+              {images.length > 1 && (
+                <div className="flex shrink-0 gap-2 overflow-x-auto pb-1">
+                  {images.map((img, i) => (
+                    <button
+                      key={img.url + i}
+                      type="button"
+                      onClick={() => setActive(i)}
+                      aria-label={`Show image ${i + 1}`}
+                      aria-current={i === active}
+                      className={cn(
+                        "h-14 w-20 shrink-0 overflow-hidden rounded-lg border-2 bg-[hsl(var(--background)/0.6)] transition-opacity",
+                        i === active ? "border-[hsl(var(--brand-accent))]" : "border-transparent opacity-60 hover:opacity-100",
+                      )}
+                    >
+                      <Img src={img.url} alt="" className="h-full w-full object-cover object-top" />
+                    </button>
+                  ))}
                 </div>
               )}
-              <div className="flex flex-col min-w-0">
-                <h2 className="text-2xl font-bold text-foreground tracking-tight truncate">{title}</h2>
-                {role && <span className="text-xs font-mono text-muted-foreground truncate">{role}</span>}
-              </div>
             </div>
+          )}
 
-            {/* Gallery Toggle Button at Bottom-Right of Header (ONLY shown if project HAS images) */}
-            {hasImages && (
-              <button
-                onClick={() => setShowGallery(!showGallery)}
-                className={`absolute bottom-3 right-4 px-3 py-1.5 rounded-lg border text-xs font-mono font-semibold flex items-center gap-1.5 transition-all shadow-sm ${showGallery
-                  ? 'bg-foreground text-background border-foreground'
-                  : 'bg-background/80 hover:bg-muted text-foreground border-border'
-                  }`}
-                title="Toggle gallery panel"
-              >
-                <ImageIcon className="w-3.5 h-3.5" />
-                <span>Gallery ({images.length})</span>
-              </button>
-            )}
-          </div>
-
-          {/* POPUP BODY: Scrollable Content */}
-          <div className="overflow-y-auto flex-1 p-6 space-y-6">
-
-            {/* Meta Info Grid: Dates & Team Size (Only rendered if present) */}
-            {((proj.start_date || proj.end_date) || proj.team_size) && (
-              <div className="flex flex-wrap items-center gap-4 p-3.5 rounded-xl bg-muted/40 border border-border/60 text-xs font-mono text-muted-foreground">
-                {(proj.start_date || proj.end_date) && (
-                  <div className="flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-foreground/80" />
-                    <span>{formatDate(proj.start_date)} — {formatDate(proj.end_date)}</span>
+          {/* Content */}
+          <div className="flex min-w-0 flex-col gap-6 p-5 sm:p-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain [&>*]:shrink-0">
+            {facts.length > 0 && (
+              <dl className={cn("well-recessed grid gap-px overflow-hidden bg-border/40", facts.length === 1 ? "grid-cols-1" : "grid-cols-2")}>
+                {facts.map((f, i) => (
+                  <div
+                    key={f.label}
+                    className={cn("flex min-w-0 flex-col gap-1 bg-[hsl(var(--background)/0.55)] px-4 py-3", facts.length === 3 && i === 2 && "col-span-2")}
+                  >
+                    <dt className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                      <f.icon className="h-3 w-3" /> {f.label}
+                    </dt>
+                    <dd className="text-sm text-foreground/90">{f.value}</dd>
                   </div>
-                )}
-
-                {(proj.start_date || proj.end_date) && proj.team_size && <span className="opacity-40">|</span>}
-
-                {proj.team_size && (
-                  <div className="flex items-center gap-2">
-                    <Users className="w-4 h-4 text-foreground/80" />
-                    <span>Team Size: <strong className="text-foreground font-semibold">{proj.team_size}</strong> {proj.team_size === 1 ? 'member' : 'members'}</span>
-                  </div>
-                )}
-              </div>
+                ))}
+              </dl>
             )}
 
-            {/* Description Content */}
             {desc && (
-              <div className="space-y-2">
-                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">About Project</span>
-                <div
-                  className="text-sm text-muted-foreground/90 leading-relaxed [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1.5"
-                  dangerouslySetInnerHTML={{ __html: desc }}
-                />
+              <div className="flex flex-col gap-3">
+                <span className="kicker">{vi ? "Tổng quan" : "Overview"}</span>
+                <RichText html={desc} />
               </div>
             )}
 
-            {/* Tech Stack Badges */}
-            {techStack && techStack.length > 0 && (
-              <div className="space-y-2">
-                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">Technologies & Tools</span>
+            {features.length > 0 && (
+              <div className="flex flex-col gap-3">
+                <span className="kicker">{vi ? "Tính năng chính" : "Key features"}</span>
+                <ul className="flex flex-col gap-3">
+                  {features.map((f) => {
+                    const i = f.indexOf(":");
+                    const head = i > 0 && i < 80 ? f.slice(0, i) : "";
+                    return (
+                      <li key={f} className="flex items-start gap-3 text-sm leading-relaxed text-muted-foreground">
+                        <span aria-hidden className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-[2px] bg-[hsl(var(--brand-accent))]" />
+                        <span className="min-w-0">
+                          {head ? (
+                            <>
+                              <strong className="font-semibold text-foreground">{head}:</strong>
+                              {f.slice(i + 1)}
+                            </>
+                          ) : (
+                            f
+                          )}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+
+            {tags.length > 0 && (
+              <div className="flex flex-col gap-3">
+                <span className="kicker">{vi ? "Công nghệ" : "Tech stack"}</span>
                 <div className="flex flex-wrap gap-2">
-                  {techStack.map((tech: string, i: number) => (
-                    <span key={i} className="text-xs font-mono px-3 py-1 rounded-full bg-muted/60 border border-border/60 text-muted-foreground font-medium">
-                      {tech}
-                    </span>
+                  {tags.map((tag) => (
+                    <TechTag key={tag}>{tag}</TechTag>
                   ))}
                 </div>
               </div>
             )}
           </div>
+        </div>
 
-          {/* POPUP FOOTER: Live Demo & Source Code buttons (Only if present) */}
-          {(proj.demo_url || proj.github_url) && (
-            <div className="p-4 md:p-5 border-t border-border bg-card flex items-center gap-3 shrink-0">
-              {proj.demo_url && (
-                <a
-                  href={proj.demo_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-xs font-medium bg-foreground text-background px-4 py-2 rounded-md flex items-center gap-2 hover:opacity-90 transition-opacity font-mono"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" /> Live Demo
-                </a>
-              )}
-              {proj.github_url && (
-                <a
-                  href={proj.github_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-xs font-medium bg-muted text-foreground px-4 py-2 rounded-md flex items-center gap-2 hover:bg-muted/80 border border-border/80 transition-colors font-mono"
-                >
-                  <Code className="w-3.5 h-3.5" /> View Source
-                </a>
-              )}
+        {/* Phone footer: links within thumb reach */}
+        {(proj.demo_url || proj.github_url) && (
+          <div className="flex shrink-0 gap-3 border-t border-border/60 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:hidden [&>*]:flex-1">{links("h-11")}</div>
+        )}
+      </div>
+
+      {/* Full-size image */}
+      {zoom && current && (
+        <div className="animate-fade-in fixed inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-black/90 p-4" onMouseDown={(e) => e.target === e.currentTarget && setZoom(false)}>
+          <button type="button" onClick={() => setZoom(false)} className="absolute top-4 right-4 rounded-full p-2 text-white hover:bg-white/15" aria-label="Close image">
+            <X className="h-6 w-6" />
+          </button>
+          <Img src={current.url} alt={`${title} screenshot ${active + 1}`} className="max-h-[80dvh] max-w-full rounded-lg object-contain" />
+          {images.length > 1 && (
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={() => step(-1)} className="rounded-full p-2 text-white hover:bg-white/15" aria-label="Previous image">
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+              <span className="font-mono text-xs text-white/70">
+                {active + 1} / {images.length}
+              </span>
+              <button type="button" onClick={() => step(1)} className="rounded-full p-2 text-white hover:bg-white/15" aria-label="Next image">
+                <ChevronRight className="h-5 w-5" />
+              </button>
             </div>
           )}
         </div>
-
-        {/* RIGHT SIDE PANEL: Vertical DepthCarousel Image Stack (ONLY shown when toggled and project has images) */}
-        {showGallery && hasImages && (
-          <div className="w-full md:w-[320px] h-[350px] md:h-auto bg-background/95 border-t md:border-t-0 md:border-l border-border flex flex-col items-center justify-center p-4 relative animate-in slide-in-from-right duration-300 shrink-0 overflow-hidden">
-            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 font-mono self-start">Project Screenshots (3D Depth Stack)</span>
-            <div className="w-full h-full flex-1 relative flex items-center justify-center overflow-hidden">
-              <DepthCarousel
-                items={depthItems}
-                cardWidth={400}
-                cardHeight={400}
-                visibleCards={3}
-                spread={100}
-                tilt={18}
-                tiltDirection="right"
-                autoplay={true}
-                autoplayDelay={3000}
-                showControls={false}
-                showIndicators={true}
-                onChange={(idx) => { }}
-                className="w-full h-full"
-              />
-            </div>
-            <button
-              onClick={() => setLightboxImgIndex(0)}
-              className="mt-2 text-xs font-mono text-muted-foreground hover:text-foreground underline transition-colors"
-            >
-              Click card to expand full resolution
-            </button>
-          </div>
-        )}
-
-      </div>
-
-      {/* FULLSCREEN LIGHTBOX IMAGE ZOOM MODAL */}
-      {lightboxImgIndex !== null && images[lightboxImgIndex] && (
-        <div
-          className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex flex-col items-center justify-between p-4 md:p-8 animate-in fade-in duration-200"
-          onClick={() => setLightboxImgIndex(null)}
-        >
-          {/* Lightbox Header */}
-          <div className="w-full flex items-center justify-between text-white text-xs font-mono max-w-5xl z-10">
-            <span>{title} ({lightboxImgIndex + 1} / {images.length})</span>
-            <button
-              onClick={() => setLightboxImgIndex(null)}
-              className="mt-15 p-2 rounded-full hover:bg-white/20 text-white transition-colors"
-              title="Close image"
-            >
-              <X className="w-6 h-6" />
-            </button>
-          </div>
-
-          {/* Lightbox Center Image */}
-          <div className="relative max-w-5xl max-h-[75vh] w-full flex items-center justify-center my-auto" onClick={e => e.stopPropagation()}>
-            <img
-              src={images[lightboxImgIndex].url}
-              className="max-w-full max-h-[75vh] object-contain rounded-lg shadow-2xl border border-white/10"
-              alt="Zoom view"
-            />
-
-            {/* Prev / Next Navigation Arrows */}
-            {images.length > 1 && (
-              <>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setLightboxImgIndex((lightboxImgIndex - 1 + images.length) % images.length);
-                  }}
-                  className="absolute left-2 p-3 rounded-full bg-black/60 hover:bg-black/90 text-white border border-white/20 transition-all hover:scale-110"
-                  title="Previous image"
-                >
-                  <ChevronLeft className="w-6 h-6" />
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setLightboxImgIndex((lightboxImgIndex + 1) % images.length);
-                  }}
-                  className="absolute right-2 p-3 rounded-full bg-black/60 hover:bg-black/90 text-white border border-white/20 transition-all hover:scale-110"
-                  title="Next image"
-                >
-                  <ChevronRight className="w-6 h-6" />
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* Lightbox Footer */}
-          <div className="text-white/60 text-xs font-mono z-10">
-            Press <kbd className="px-1.5 py-0.5 bg-white/20 rounded text-white">ESC</kbd> or click outside to exit
-          </div>
-        </div>
       )}
-    </div>
+    </Overlay>
+  );
+}
+
+/* ───────────────────────── admin ───────────────────────── */
+
+function ProjectFormSheet({
+  form,
+  setForm,
+  onCancel,
+  onSave,
+  saving,
+  error,
+  setError,
+}: {
+  form: ProjectForm;
+  setForm: (f: ProjectForm) => void;
+  onCancel: () => void;
+  onSave: () => void;
+  saving: boolean;
+  error: string | null;
+  setError: (e: string | null) => void;
+}) {
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const images = form.images ?? [];
+  const set = (key: keyof ProjectForm) => (e: ChangeEvent<HTMLInputElement>) => setForm({ ...form, [key]: e.target.value });
+
+  const upload = async (e: ChangeEvent<HTMLInputElement>, kind: "logo" | "image") => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const setBusy = kind === "logo" ? setUploadingLogo : setUploadingImage;
+    setBusy(true);
+    const url = await uploadToStorage(kind === "logo" ? "project-logos" : "projects", file);
+    setBusy(false);
+    if (!url) return setError("Upload failed.");
+    setForm(kind === "logo" ? { ...form, logo_url: url } : { ...form, images: [...images, { url }] });
+  };
+
+  const moveImage = (i: number, d: number) => {
+    const next = [...images];
+    const j = i + d;
+    if (j < 0 || j >= next.length) return;
+    [next[i], next[j]] = [next[j], next[i]];
+    setForm({ ...form, images: next });
+  };
+
+  return (
+    <AdminForm
+      title={form.id ? "Edit project" : "Add project"}
+      icon={FolderOpen}
+      error={error}
+      onClose={onCancel}
+      actions={<SaveCancel onCancel={onCancel} onSave={onSave} saving={saving} saveLabel="Save project" />}
+    >
+      <FormSection index="01" title="Project (EN)" className="sm:grid-cols-2">
+        <Field label="Title (EN) *">
+          <input value={form.title || ""} onChange={set("title")} className="field-raised" placeholder="Portfolio website" />
+        </Field>
+        <Field label="Role (EN)">
+          <input value={form.role || ""} onChange={set("role")} className="field-raised" placeholder="Full-stack developer" />
+        </Field>
+      </FormSection>
+
+      <FormSection index="02" title="Project (VI)" className="sm:grid-cols-2">
+        <Field label="Title (VI)">
+          <input value={form.title_vi || ""} onChange={set("title_vi")} className="field-raised" placeholder="Trang web portfolio" />
+        </Field>
+        <Field label="Role (VI)">
+          <input value={form.role_vi || ""} onChange={set("role_vi")} className="field-raised" placeholder="Lập trình viên full-stack" />
+        </Field>
+      </FormSection>
+
+      <FormSection index="03" title="Description">
+        <Field label="Description (EN)" group>
+          <RichTextEditor value={form.description || ""} onChange={(html) => setForm({ ...form, description: html })} />
+        </Field>
+        <Field label="Description (VI)" group>
+          <RichTextEditor value={form.description_vi || ""} onChange={(html) => setForm({ ...form, description_vi: html })} />
+        </Field>
+      </FormSection>
+
+      <FormSection index="04" title="Links, dates & team" className="sm:grid-cols-2">
+        <Field label="Live demo URL">
+          <input value={form.demo_url || ""} onChange={set("demo_url")} className="field-raised" placeholder="https://example.com" />
+        </Field>
+        <Field label="GitHub URL">
+          <input value={form.github_url || ""} onChange={set("github_url")} className="field-raised" placeholder="https://github.com/user/repo" />
+        </Field>
+        <Field label="Start date">
+          <input type="date" value={form.start_date || ""} onChange={set("start_date")} className="field-raised" />
+        </Field>
+        <Field label="End date">
+          <input type="date" value={form.end_date || ""} onChange={set("end_date")} className="field-raised" />
+        </Field>
+        <label className="flex min-h-11 cursor-pointer items-center gap-3 self-end rounded-xl border border-border/60 bg-background/40 px-3.5 py-2.5 sm:col-span-2">
+          <input
+            type="checkbox"
+            checked={!!form.is_featured}
+            onChange={(e) => setForm({ ...form, is_featured: e.target.checked })}
+            className="h-4 w-4 accent-[hsl(var(--brand-accent))]"
+          />
+          <Star className="h-4 w-4 text-amber-400" />
+          <span className="text-sm text-foreground">Featured project (shown large at the top)</span>
+        </label>
+        <Field label="Team size">
+          <input
+            type="number"
+            min={1}
+            max={500}
+            value={form.team_size ?? 1}
+            onChange={(e) => setForm({ ...form, team_size: e.target.value ? Number(e.target.value) : undefined })}
+            className="field-raised"
+          />
+        </Field>
+      </FormSection>
+
+      <FormSection index="05" title="Technologies & features">
+        <Field label="Tech stack (comma-separated)">
+          <input value={form.tech_stack_input || ""} onChange={set("tech_stack_input")} className="field-raised" placeholder="React, Next.js, Supabase" />
+        </Field>
+        <Field label="Key features (EN), one per line · “Title: details”">
+          <textarea
+            rows={5}
+            value={form.features_input || ""}
+            onChange={(e) => setForm({ ...form, features_input: e.target.value })}
+            className="field-raised resize-y"
+            placeholder="Realtime dashboard: live metrics from the TikTok API"
+          />
+        </Field>
+        <Field label="Key features (VI), one per line">
+          <textarea
+            rows={5}
+            value={form.features_vi_input || ""}
+            onChange={(e) => setForm({ ...form, features_vi_input: e.target.value })}
+            className="field-raised resize-y"
+            placeholder="Bảng điều khiển thời gian thực: số liệu trực tiếp từ TikTok API"
+          />
+        </Field>
+      </FormSection>
+
+      <FormSection index="06" title="Logo & gallery">
+        <div className="flex items-center gap-4">
+          <span className="tile-raised h-14 w-14 shrink-0 overflow-hidden rounded-full text-muted-foreground">
+            {form.logo_url ? <Img src={form.logo_url} className="h-full w-full object-cover" alt="Logo preview" /> : <Briefcase className="h-5 w-5" />}
+          </span>
+          <UploadButton accept="image/*" onChange={(e) => upload(e, "logo")} uploading={uploadingLogo}>
+            Upload logo
+          </UploadButton>
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-xl border border-border/60 bg-background/40 p-3 sm:p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Gallery ({images.length}) · first image is the cover</span>
+            <UploadButton accept="image/*" onChange={(e) => upload(e, "image")} uploading={uploadingImage} icon={ImageIcon}>
+              Add image
+            </UploadButton>
+          </div>
+          {images.length > 0 ? (
+            <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+              {images.map((img, i) => (
+                <div key={img.url + i} className="tile-raised group/img relative aspect-square overflow-hidden p-0">
+                  <Img src={img.url} className="h-full w-full object-cover" alt={`Gallery item ${i + 1}`} />
+                  <div className="absolute inset-x-1 bottom-1 flex justify-between opacity-0 transition-opacity group-hover/img:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+                    <button type="button" onClick={() => moveImage(i, -1)} disabled={i === 0} className="btn-raised h-7 w-7 rounded-md" aria-label={`Move image ${i + 1} left`}>
+                      <ChevronLeft className="h-3 w-3" />
+                    </button>
+                    <button type="button" onClick={() => moveImage(i, 1)} disabled={i === images.length - 1} className="btn-raised h-7 w-7 rounded-md" aria-label={`Move image ${i + 1} right`}>
+                      <ChevronRight className="h-3 w-3" />
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, images: images.filter((_, j) => j !== i) })}
+                    className="btn-raised btn-danger absolute top-1 right-1 h-7 w-7 rounded-md opacity-0 transition-opacity group-hover/img:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
+                    aria-label={`Remove gallery image ${i + 1}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-lg px-4 py-6 text-center font-mono text-xs text-muted-foreground" style={{ backgroundImage: HATCH_PATTERN }}>
+              No images yet
+            </div>
+          )}
+        </div>
+      </FormSection>
+    </AdminForm>
   );
 }

@@ -1,5 +1,5 @@
 import { ImageResponse } from 'next/og';
-import { supabase } from "@/lib/supabase";
+import { profileData } from "@/data";
 
 export const size = {
   width: 64,
@@ -9,13 +9,7 @@ export const size = {
 export const contentType = 'image/png';
 
 export default async function Icon() {
-  const { data: profiles } = await supabase
-    .from('profiles')
-    .select('avatar_url, avatar_x, avatar_y, avatar_scale')
-    .order('updated_at', { ascending: false })
-    .limit(1);
-
-  const profile = profiles?.[0];
+  const profile = profileData;
   const avatarUrl = profile?.avatar_url;
 
   if (!avatarUrl) {

@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useRef, useState, useEffect } from "react";
 import LightRays, { RaysOrigin } from "@/components/ui/light-rays";
 import { TLMarkIsometric } from "@/components/ui/tl-mark-isometric";
+import { cn } from "@/lib/utils";
 
 interface TLMarkLightRaysProps {
   raysOrigin?: RaysOrigin;
@@ -13,36 +13,32 @@ interface TLMarkLightRaysProps {
   followMouse?: boolean;
   mouseInfluence?: number;
   className?: string;
+  /**
+   * Positions the TL drawing sheet (900x500, rendered at its natural aspect ratio).
+   * Defaults to filling the container.
+   */
+  markClassName?: string;
+  /** Centre of the ambient glow behind the letters, as a CSS position. */
+  glowAt?: string;
 }
 
+/** The isometric TL monogram over WebGL light rays and a soft pulsing glow. */
 export function TLMarkLightRays({
   raysOrigin = "top-right",
   raysColor = "#38bdf8",
   raysSpeed = 1.2,
   lightSpread = 1.4,
   rayLength = 1.2,
-  followMouse = true,
+  followMouse = false,
   mouseInfluence = 0.25,
   className = "",
+  markClassName = "absolute inset-0",
+  glowAt = "75% 35%",
 }: TLMarkLightRaysProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [glowIntensity, setGlowIntensity] = useState(1);
-
-  useEffect(() => {
-    // Subtle pulsing ambient light interaction
-    const interval = setInterval(() => {
-      setGlowIntensity(0.85 + Math.sin(Date.now() * 0.003) * 0.15);
-    }, 50);
-    return () => clearInterval(interval);
-  }, []);
-
   return (
-    <div
-      ref={containerRef}
-      className={`absolute inset-0 w-full h-full overflow-hidden select-none group ${className}`}
-    >
-      {/* 1. WebGL LightRays Background Layer */}
-      <div className="absolute inset-0 z-0 pointer-events-none opacity-85 transition-opacity duration-500 group-hover:opacity-100">
+    <div className={cn("group absolute inset-0 h-full w-full select-none overflow-hidden", className)}>
+      {/* 1. WebGL light rays */}
+      <div className="pointer-events-none absolute inset-0 z-0 opacity-85 transition-opacity duration-500 group-hover:opacity-100">
         <LightRays
           raysOrigin={raysOrigin}
           raysColor={raysColor}
@@ -58,20 +54,15 @@ export function TLMarkLightRays({
         />
       </div>
 
-      {/* 2. Interactive Light Reflection / Bloom Aura behind the TL Logo */}
+      {/* 2. Ambient bloom behind the letters (CSS animation, no re-renders) */}
       <div
-        className="absolute inset-0 pointer-events-none z-10 transition-opacity duration-300"
-        style={{
-          background: `radial-gradient(circle at 75% 35%, ${raysColor}30 0%, transparent 50%)`,
-          opacity: glowIntensity,
-        }}
+        className="animate-tl-glow pointer-events-none absolute inset-0 z-10"
+        style={{ background: `radial-gradient(circle at ${glowAt}, ${raysColor}30 0%, transparent 50%)` }}
       />
 
-      {/* 3. Front-Facing 3D TL Mark Graphic Layer (Positioned as Header Background Graphic) */}
-      <div className="absolute inset-0 z-20 flex items-center justify-end pr-2 md:pr-8 pl-32 pointer-events-auto opacity-75 dark:opacity-90 transition-transform duration-300">
-        <div className="w-full max-w-[460px] md:max-w-[520px]">
-          <TLMarkIsometric />
-        </div>
+      {/* 3. TL drawing sheet */}
+      <div className={cn("pointer-events-auto z-20", markClassName)}>
+        <TLMarkIsometric className="h-auto w-full" />
       </div>
     </div>
   );

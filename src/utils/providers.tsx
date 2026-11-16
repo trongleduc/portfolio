@@ -4,7 +4,6 @@ import * as React from "react";
 import { ThemeProvider as NextThemesProvider } from "next-themes";
 import type { ThemeProviderProps } from "next-themes";
 import { Language, translations } from "@/lib/i18n";
-import { supabase } from "@/lib/supabase";
 
 type AppContextType = {
   language: Language;
@@ -22,7 +21,7 @@ const AppContext = React.createContext<AppContextType | undefined>(undefined);
 
 export function AppProviders({ children, ...props }: ThemeProviderProps) {
   const [language, setLanguage] = React.useState<Language>('en');
-  const [colorTheme, setColorTheme] = React.useState<'blue' | 'green'>('blue');
+  const [colorTheme, setColorTheme] = React.useState<'blue' | 'green'>('green');
   const [fontTheme, setFontTheme] = React.useState<string>('sans');
   const [isAdmin, setIsAdmin] = React.useState(false);
 
@@ -39,20 +38,6 @@ export function AppProviders({ children, ...props }: ThemeProviderProps) {
     if (savedFont) {
       setFontTheme(savedFont);
     }
-
-    // Check initial auth state
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setIsAdmin(!!session);
-    });
-
-    // Listen for auth changes
-    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      setIsAdmin(!!session);
-    });
-
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
   }, []);
 
   React.useEffect(() => {
