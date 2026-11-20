@@ -1,18 +1,25 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { ArrowUpRight, Facebook, Github, Key, Linkedin, LogOut, Mail, Send } from "lucide-react";
+import { ArrowUpRight, Facebook, Github, Key, KeyRound, Linkedin, Loader2, LogOut, Mail, Send } from "lucide-react";
 import { useAppContext } from "@/utils/providers";
 import type { Profile } from "@/types/portfolio";
 import { ADMIN_BTN } from "@/components/ui/admin-form";
 import { Overlay } from "@/components/ui/overlay";
+import { supabase } from "@/lib/supabase";
+
+/** The single Supabase Auth user that owns the portfolio. Only the password is typed in. */
+const ADMIN_EMAIL = process.env.NEXT_PUBLIC_ADMIN_EMAIL || "admin@portfolio.local";
+const MIN_PASSWORD_LENGTH = 8;
 
 export function Contact({ initialProfile }: { initialProfile?: Profile | null }) {
-  const { t, isAdmin, setIsAdmin, language } = useAppContext();
+  const { t, isAdmin, language } = useAppContext();
   const [clickCount, setClickCount] = useState(0);
   const [showPassword, setShowPassword] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
 
   const p = initialProfile;
   const name = (language === "vi" ? p?.full_name_vi : p?.full_name) || p?.full_name || "Le Duc Trong";
@@ -29,16 +36,19 @@ export function Contact({ initialProfile }: { initialProfile?: Profile | null })
     }
   };
 
-  const handleLogin = (e: FormEvent) => {
+  // Signs in to Supabase Auth; AppProviders turns admin mode on from the new session.
+  const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
-    if (password === "portfolio_admin_secret_123!" || password === "admin") {
-      setIsAdmin(true);
-      setShowPassword(false);
-      setPassword("");
-    } else {
+    setLoggingIn(true);
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email: ADMIN_EMAIL, password });
+    setLoggingIn(false);
+    if (signInError) {
       setError(t.admin.loginError);
+      return;
     }
+    setShowPassword(false);
+    setPassword("");
   };
 
   const closeLogin = () => {
@@ -108,9 +118,22 @@ export function Contact({ initialProfile }: { initialProfile?: Profile | null })
           © {new Date().getFullYear()} {name}
         </span>
         {isAdmin ? (
-          <button type="button" onClick={() => setIsAdmin(false)} className="inline-flex items-center gap-1.5 font-medium text-red-500 transition hover:text-red-400">
-            <LogOut className="h-3.5 w-3.5" /> {t.admin.exitEdit}
-          </button>
+          <span className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1">
+            <button
+              type="button"
+              onClick={() => setShowChangePassword(true)}
+              className="inline-flex min-h-11 items-center gap-1.5 font-medium text-foreground transition hover:text-[hsl(var(--brand-ink))] sm:min-h-0"
+            >
+              <KeyRound className="h-3.5 w-3.5" /> {t.admin.changePassword}
+            </button>
+            <button
+              type="button"
+              onClick={() => supabase.auth.signOut()}
+              className="inline-flex min-h-11 items-center gap-1.5 font-medium text-red-500 transition hover:text-red-400 sm:min-h-0"
+            >
+              <LogOut className="h-3.5 w-3.5" /> {t.admin.exitEdit}
+            </button>
+          </span>
         ) : (
           <span>Built with Next.js · Supabase</span>
         )}
@@ -140,9 +163,10 @@ export function Contact({ initialProfile }: { initialProfile?: Profile | null })
               {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
               <div className="flex gap-3">
                 <button type="button" onClick={closeLogin} className={`${ADMIN_BTN} flex-1`}>
-                  Cancel
+                  {t.admin.cancel}
                 </button>
-                <button type="submit" disabled={!password} className={`${ADMIN_BTN} btn-primary flex-1`}>
+                <button type="submit" disabled={!password || loggingIn} className={`${ADMIN_BTN} btn-primary flex-1`}>
+                  {loggingIn && <Loader2 className="h-4 w-4 animate-spin" />}
                   {t.admin.submit}
                 </button>
               </div>
@@ -150,6 +174,97 @@ export function Contact({ initialProfile }: { initialProfile?: Profile | null })
           </div>
         </Overlay>
       )}
+
+      {showChangePassword && isAdmin && <ChangePasswordDialog onClose={() => setShowChangePassword(false)} />}
     </section>
+  );
+}
+
+/**
+ * Changes the admin's Supabase Auth password. The current password is checked by
+ * signing in again first, which also gives updateUser a fresh session.
+ */
+function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
+  const { t } = useAppContext();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (next.length < MIN_PASSWORD_LENGTH) return setError(t.admin.passwordTooShort);
+    if (next !== confirm) return setError(t.admin.passwordMismatch);
+
+    setSaving(true);
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email: ADMIN_EMAIL, password: current });
+    if (signInError) {
+      setSaving(false);
+      return setError(t.admin.currentPasswordWrong);
+    }
+    const { error: updateError } = await supabase.auth.updateUser({ password: next });
+    setSaving(false);
+    if (updateError) return setError(updateError.message);
+    setDone(true);
+  };
+
+  const fields = [
+    { label: t.admin.currentPassword, value: current, set: setCurrent, autoComplete: "current-password" },
+    { label: t.admin.newPassword, value: next, set: setNext, autoComplete: "new-password" },
+    { label: t.admin.confirmPassword, value: confirm, set: setConfirm, autoComplete: "new-password" },
+  ];
+
+  return (
+    <Overlay onClose={onClose} labelledBy="admin-password-title" zIndex={160}>
+      <div className="sheet-panel animate-sheet-in w-full max-w-sm overflow-hidden rounded-2xl">
+        <div className="flex items-center gap-3 border-b border-border/60 px-5 py-4">
+          <span className="tile-raised h-10 w-10 shrink-0 text-[hsl(var(--brand-ink))]">
+            <KeyRound className="h-4 w-4" />
+          </span>
+          <h3 id="admin-password-title" className="font-display text-base font-bold text-foreground">
+            {t.admin.changePassword}
+          </h3>
+        </div>
+        {done ? (
+          <div className="flex flex-col gap-4 p-5">
+            <p role="status" className="text-sm text-foreground">{t.admin.passwordChanged}</p>
+            <button type="button" onClick={onClose} className={`${ADMIN_BTN} btn-primary`} autoFocus>
+              OK
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4 p-5">
+            {/* Lets password managers attach the new password to the right account. */}
+            <input type="text" name="username" autoComplete="username" value={ADMIN_EMAIL} readOnly hidden />
+            {fields.map(({ label, value, set, autoComplete }, i) => (
+              <input
+                key={label}
+                type="password"
+                value={value}
+                onChange={(e) => set(e.target.value)}
+                placeholder={label}
+                aria-label={label}
+                autoComplete={autoComplete}
+                className="field-raised"
+                autoFocus={i === 0}
+              />
+            ))}
+            {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
+            <div className="flex gap-3">
+              <button type="button" onClick={onClose} className={`${ADMIN_BTN} flex-1`}>
+                {t.admin.cancel}
+              </button>
+              <button type="submit" disabled={!current || !next || !confirm || saving} className={`${ADMIN_BTN} btn-primary flex-1`}>
+                {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+                {t.admin.save}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </Overlay>
   );
 }

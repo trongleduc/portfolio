@@ -4,6 +4,7 @@ import * as React from "react";
 import { ThemeProvider as NextThemesProvider } from "next-themes";
 import type { ThemeProviderProps } from "next-themes";
 import { Language, translations } from "@/lib/i18n";
+import { supabase } from "@/lib/supabase";
 
 type AppContextType = {
   language: Language;
@@ -13,8 +14,8 @@ type AppContextType = {
   fontTheme: string;
   setFontTheme: (font: string) => void;
   t: typeof translations['en'];
+  /** True while a Supabase Auth session exists (the admin is signed in). */
   isAdmin: boolean;
-  setIsAdmin: (v: boolean) => void;
 };
 
 const AppContext = React.createContext<AppContextType | undefined>(undefined);
@@ -24,6 +25,14 @@ export function AppProviders({ children, ...props }: ThemeProviderProps) {
   const [colorTheme, setColorTheme] = React.useState<'blue' | 'green'>('green');
   const [fontTheme, setFontTheme] = React.useState<string>('sans');
   const [isAdmin, setIsAdmin] = React.useState(false);
+
+  // Admin mode follows the Supabase Auth session, so the RLS write policies
+  // (authenticated only) hold whenever the edit UI is shown.
+  React.useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => setIsAdmin(!!session));
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => setIsAdmin(!!session));
+    return () => data.subscription.unsubscribe();
+  }, []);
 
   React.useEffect(() => {
     const savedLang = localStorage.getItem('portfolio-language') as Language;
@@ -69,7 +78,6 @@ export function AppProviders({ children, ...props }: ThemeProviderProps) {
     setFontTheme,
     t: translations[language] || translations['en'],
     isAdmin,
-    setIsAdmin
   }), [language, colorTheme, fontTheme, isAdmin]);
 
   return (
